@@ -344,11 +344,29 @@ export class CursorRenderer {
   private lastCheckedTime = -1;
 
   private checkForClicks(currentTimeMs: number, scale: number, offsetX: number, offsetY: number) {
-    // Look for click events within a small window around current time
+    // Initialize lastCheckedTime on first call
+    if (this.lastCheckedTime < 0) {
+      this.lastCheckedTime = currentTimeMs;
+      return;
+    }
+
     const windowStart = this.lastCheckedTime;
     const windowEnd = currentTimeMs;
 
-    if (windowEnd <= windowStart) return;
+    // Skip if going backwards (seeking backwards)
+    if (windowEnd <= windowStart) {
+      this.lastCheckedTime = currentTimeMs;
+      return;
+    }
+
+    // Skip if time jumped too much (scrubbing/seeking)
+    // Note: timestamps are scaled by 1000, so normal playback ~16-33ms becomes ~16000-33000
+    // Use 50000 as threshold (~50ms in real time)
+    const timeDelta = windowEnd - windowStart;
+    if (timeDelta > 50000) {
+      this.lastCheckedTime = currentTimeMs;
+      return;
+    }
 
     for (const event of this.trackingData) {
       if (event.type === 'click' || event.type === 'down') {

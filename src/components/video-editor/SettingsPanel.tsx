@@ -1,13 +1,24 @@
 import { cn } from "@/lib/utils";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { getAssetPath } from "@/lib/assetPath";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { useState } from "react";
 import Colorful from '@uiw/react-color-colorful';
 import { hsvaToHex } from '@uiw/color-convert';
-import { Trash2, Download, Crop, X, Bug, Upload, MousePointer2 } from "lucide-react";
+import {
+  Download,
+  Crop,
+  X,
+  Bug,
+  Upload,
+  MousePointer2,
+  ZoomIn,
+  Zap,
+  Monitor,
+  Palette,
+  Image as ImageIcon,
+  Layers,
+  LayoutTemplate,
+  Trash2
+} from "lucide-react";
 import { toast } from "sonner";
 import type { ZoomDepth, CropRegion, CursorSettings } from "./types";
 import { CURSOR_STYLE_OPTIONS, CLICK_EFFECT_OPTIONS } from "./types";
@@ -64,36 +75,172 @@ interface SettingsPanelProps {
 export default SettingsPanel;
 
 const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
-  { depth: 1, label: "1.25×" },
-  { depth: 2, label: "1.5×" },
-  { depth: 3, label: "1.8×" },
-  { depth: 4, label: "2.2×" },
-  { depth: 5, label: "3.5×" },
+  { depth: 1, label: "1.0x" },
+  { depth: 2, label: "1.25x" },
+  { depth: 3, label: "1.5x" },
+  { depth: 4, label: "2.0x" },
+  { depth: 5, label: "3.5x" },
 ];
 
-export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, onZoomDepthChange, selectedZoomId, onZoomDelete, showShadow, onShadowChange, showBlur, onBlurChange, cropRegion, onCropChange, videoElement, onExport, cursorSettings, onCursorSettingsChange }: SettingsPanelProps) {
+// Tab Button Component
+const TabButton = ({
+  active,
+  onClick,
+  label,
+  icon
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+}) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "flex items-center justify-center gap-2 rounded-md py-2 text-xs font-medium transition-all",
+      active
+        ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700"
+        : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+    )}
+  >
+    {icon}
+    {label}
+  </button>
+);
+
+// Toggle Item Component
+const ToggleItem = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
+  <div
+    className="flex cursor-pointer items-center justify-between rounded-lg border border-transparent px-2 py-2 transition-colors hover:bg-zinc-900"
+    onClick={onClick}
+  >
+    <span className="text-xs font-medium text-zinc-300">{label}</span>
+    <div className={cn("relative h-5 w-9 rounded-full transition-colors", active ? 'bg-emerald-600' : 'bg-zinc-700')}>
+      <div className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", active ? 'left-[18px]' : 'left-0.5')} />
+    </div>
+  </div>
+);
+
+// Option Button Component
+const OptionButton = ({
+  label,
+  icon,
+  active,
+  onClick
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  active: boolean;
+  onClick: () => void
+}) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "flex h-10 items-center justify-center gap-2 rounded-lg border text-xs font-medium transition-all active:scale-95",
+      active
+        ? "border-emerald-600/50 bg-emerald-900/20 text-emerald-400 shadow-sm"
+        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-200"
+    )}
+  >
+    {icon}
+    {label}
+  </button>
+);
+
+// Memoized Wallpaper Item with lazy loading
+const WallpaperItem = memo(({ path, isSelected, onClick }: { path: string; isSelected: boolean; onClick: () => void }) => (
+  <div
+    className={cn(
+      "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer bg-zinc-900",
+      isSelected
+        ? "border-emerald-500 ring-2 ring-emerald-500/30"
+        : "border-zinc-800 hover:border-zinc-600"
+    )}
+    onClick={onClick}
+  >
+    <img
+      src={path}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className="w-full h-full object-cover"
+    />
+  </div>
+));
+WallpaperItem.displayName = 'WallpaperItem';
+
+// Memoized Gradient Item
+const GradientItem = memo(({ gradient, isSelected, onClick }: { gradient: string; isSelected: boolean; onClick: () => void }) => (
+  <div
+    className={cn(
+      "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer",
+      isSelected
+        ? "border-emerald-500 ring-2 ring-emerald-500/30"
+        : "border-zinc-800 hover:border-zinc-600"
+    )}
+    style={{ background: gradient }}
+    onClick={onClick}
+  />
+));
+GradientItem.displayName = 'GradientItem';
+
+export function SettingsPanel({
+  selected,
+  onWallpaperChange,
+  selectedZoomDepth,
+  onZoomDepthChange,
+  selectedZoomId,
+  onZoomDelete,
+  showShadow,
+  onShadowChange,
+  showBlur,
+  onBlurChange,
+  cropRegion,
+  onCropChange,
+  videoElement,
+  onExport,
+  cursorSettings,
+  onCursorSettingsChange
+}: SettingsPanelProps) {
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      try {
-        const resolved = await Promise.all(WALLPAPER_RELATIVE.map(p => getAssetPath(p)))
-        if (mounted) setWallpaperPaths(resolved)
-      } catch (err) {
-        if (mounted) setWallpaperPaths(WALLPAPER_RELATIVE.map(p => `/${p}`))
-      }
-    })()
-    return () => { mounted = false }
-  }, [])
   const [hsva, setHsva] = useState({ h: 0, s: 0, v: 68, a: 1 });
   const [gradient, setGradient] = useState<string>(GRADIENTS[0]);
   const [showCropDropdown, setShowCropDropdown] = useState(false);
+  const [bgMode, setBgMode] = useState<'image' | 'color' | 'gradient'>('image');
+  const [activeTab, setActiveTab] = useState<'canvas' | 'cursor'>('canvas');
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const resolved = await Promise.all(WALLPAPER_RELATIVE.map(p => getAssetPath(p)));
+        if (mounted) setWallpaperPaths(resolved);
+      } catch {
+        if (mounted) setWallpaperPaths(WALLPAPER_RELATIVE.map(p => `/${p}`));
+      }
+    })();
+    return () => { mounted = false };
+  }, []);
+
+  // Memoize the final wallpaper list to avoid recomputation
+  const finalWallpaperPaths = useMemo(() => {
+    return wallpaperPaths.length > 0 ? wallpaperPaths : WALLPAPER_RELATIVE.map(p => `/${p}`);
+  }, [wallpaperPaths]);
+
+  // Memoize selection check function
+  const isWallpaperSelected = useMemo(() => {
+    if (!selected) return () => false;
+    const selectedFilename = selected.split('/').pop() || '';
+    return (path: string) => {
+      if (selected === path) return true;
+      return path.includes(selectedFilename);
+    };
+  }, [selected]);
 
   const zoomEnabled = Boolean(selectedZoomDepth);
-  
+
   const handleDeleteClick = () => {
     if (selectedZoomId && onZoomDelete) {
       onZoomDelete(selectedZoomId);
@@ -105,8 +252,7 @@ export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, 
     if (!files || files.length === 0) return;
 
     const file = files[0];
-    
-    // Validate file type - only allow JPG/JPEG
+
     const validTypes = ['image/jpeg', 'image/jpg'];
     if (!validTypes.includes(file.type)) {
       toast.error('Invalid file type', {
@@ -134,192 +280,366 @@ export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, 
     };
 
     reader.readAsDataURL(file);
-    // Reset input so the same file can be selected again
     event.target.value = '';
   };
 
   const handleRemoveCustomImage = (imageUrl: string, event: React.MouseEvent) => {
     event.stopPropagation();
     setCustomImages(prev => prev.filter(img => img !== imageUrl));
-    // If the removed image was selected, clear selection
     if (selected === imageUrl) {
       onWallpaperChange(wallpaperPaths[0] || WALLPAPER_RELATIVE[0]);
     }
   };
 
   return (
-    <div className="flex-[3] min-w-0 bg-[#09090b] border border-white/5 rounded-2xl p-6 flex flex-col shadow-xl h-full overflow-y-auto custom-scrollbar">
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-medium text-slate-200">Zoom Level</span>
-          {zoomEnabled && selectedZoomDepth && (
-            <span className="text-[10px] uppercase tracking-wider font-medium text-[#34B27B] bg-[#34B27B]/10 px-2 py-1 rounded-full">
-              {ZOOM_DEPTH_OPTIONS.find(o => o.depth === selectedZoomDepth)?.label} Active
-            </span>
-          )}
-        </div>
-        <div className="grid grid-cols-5 gap-2">
-          {ZOOM_DEPTH_OPTIONS.map((option) => {
-            const isActive = selectedZoomDepth === option.depth;
-            return (
-              <Button
-                key={option.depth}
-                type="button"
-                disabled={!zoomEnabled}
-                onClick={() => onZoomDepthChange?.(option.depth)}
-                className={cn(
-                  "h-auto w-full rounded-xl border px-1 py-3 text-center shadow-sm transition-all flex flex-col items-center justify-center gap-1.5",
-                  "duration-200 ease-out",
-                  zoomEnabled ? "opacity-100 cursor-pointer" : "opacity-40 cursor-not-allowed",
-                  isActive
-                    ? "border-[#34B27B] bg-[#34B27B] text-white shadow-[#34B27B]/20 scale-105 ring-2 ring-[#34B27B]/20"
-                    : "border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10 hover:text-slate-200"
+    <aside className="flex-[3] min-w-0 flex h-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+        <h2 className="text-sm font-semibold tracking-wide text-zinc-100">Properties</h2>
+        <button className="text-zinc-500 hover:text-zinc-300">
+          <Layers size={16} />
+        </button>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 bg-zinc-900/30 p-2">
+        <TabButton
+          active={activeTab === 'canvas'}
+          onClick={() => setActiveTab('canvas')}
+          label="Canvas"
+          icon={<LayoutTemplate size={14} />}
+        />
+        <TabButton
+          active={activeTab === 'cursor'}
+          onClick={() => setActiveTab('cursor')}
+          label="Cursor"
+          icon={<MousePointer2 size={14} />}
+        />
+      </div>
+
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+
+        {/* --- CANVAS TAB CONTENT --- */}
+        {activeTab === 'canvas' && (
+          <div className="space-y-8">
+
+            {/* Section: Viewport / Zoom */}
+            <section>
+              <div className="mb-3 flex items-center justify-between">
+                <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  <ZoomIn size={12} /> Viewport
+                </label>
+                {zoomEnabled && selectedZoomDepth && (
+                  <span className="text-xs text-emerald-400">
+                    {ZOOM_DEPTH_OPTIONS.find(o => o.depth === selectedZoomDepth)?.label}
+                  </span>
                 )}
-              >
-                <span className={cn("text-sm font-semibold tracking-tight")}>{option.label}</span>
-              </Button>
-            );
-          })}
-        </div>
-        {!zoomEnabled && (
-          <p className="text-xs text-slate-500 mt-3 text-center">Select a zoom region in the timeline to adjust depth.</p>
-        )}
-        {zoomEnabled && (
-          <Button
-            onClick={handleDeleteClick}
-            variant="destructive"
-            size="sm"
-            className="mt-4 w-full gap-2 bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:border-red-500/30 transition-all"
-          >
-            <Trash2 className="w-4 h-4" />
-            Delete Zoom Region
-          </Button>
-        )}
-      </div>
-
-      <div className="mb-8 space-y-4">
-        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-          <div className="text-sm font-medium text-slate-200">Drop Shadow</div>
-          <Switch
-            checked={showShadow}
-            onCheckedChange={onShadowChange}
-            className="data-[state=checked]:bg-[#34B27B]"
-          />
-        </div>
-        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-          <div className="text-sm font-medium text-slate-200">Blur Background</div>
-          <Switch
-            checked={showBlur}
-            onCheckedChange={onBlurChange}
-            className="data-[state=checked]:bg-[#34B27B]"
-          />
-        </div>
-      </div>
-
-      {/* Cursor Settings */}
-      {cursorSettings && onCursorSettingsChange && (
-        <div className="mb-8">
-          <div className="flex items-center gap-2 mb-4">
-            <MousePointer2 className="w-4 h-4 text-slate-400" />
-            <span className="text-sm font-medium text-slate-200">Cursor</span>
-          </div>
-
-          {/* Cursor Style */}
-          <div className="mb-4">
-            <span className="text-xs text-slate-400 mb-2 block">Style</span>
-            <div className="grid grid-cols-5 gap-1.5">
-              {CURSOR_STYLE_OPTIONS.map((option) => (
-                <Button
-                  key={option.value}
-                  type="button"
-                  onClick={() => onCursorSettingsChange({ ...cursorSettings, style: option.value })}
-                  className={cn(
-                    "h-auto w-full rounded-lg border px-1 py-2 text-center shadow-sm transition-all text-[10px]",
-                    cursorSettings.style === option.value
-                      ? "border-[#34B27B] bg-[#34B27B] text-white"
-                      : "border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
-                  )}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          {/* Click Effect */}
-          <div className="mb-4">
-            <span className="text-xs text-slate-400 mb-2 block">Click Effect</span>
-            <div className="grid grid-cols-4 gap-1.5">
-              {CLICK_EFFECT_OPTIONS.map((option) => (
-                <Button
-                  key={option.value}
-                  type="button"
-                  onClick={() => onCursorSettingsChange({ ...cursorSettings, clickEffect: option.value })}
-                  className={cn(
-                    "h-auto w-full rounded-lg border px-1 py-2 text-center shadow-sm transition-all text-[10px]",
-                    cursorSettings.clickEffect === option.value
-                      ? "border-[#34B27B] bg-[#34B27B] text-white"
-                      : "border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
-                  )}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          {/* Click Effect Color (only show if click effect is not none) */}
-          {cursorSettings.clickEffect !== 'none' && (
-            <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-              <div className="text-xs text-slate-400">Click Color</div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={cursorSettings.clickColor}
-                  onChange={(e) => onCursorSettingsChange({ ...cursorSettings, clickColor: e.target.value })}
-                  className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
-                />
-                <span className="text-xs text-slate-500 font-mono">{cursorSettings.clickColor}</span>
               </div>
-            </div>
-          )}
-        </div>
-      )}
 
-      <div className="mb-8">
-        <Button
-          onClick={() => setShowCropDropdown(!showCropDropdown)}
-          variant="outline"
-          className="w-full gap-2 bg-white/5 text-slate-200 border-white/10 hover:bg-white/10 hover:border-white/20 hover:text-white h-11 transition-all"
-        >
-          <Crop className="w-4 h-4" />
-          Crop Video
-        </Button>
-        <p className="text-[10px] text-slate-500 text-center mt-3 px-4 leading-relaxed">
-          If the preview looks weirdly positioned or doesn't load, try force reloading the app a few times till it works.
-        </p>
+              <div className="grid grid-cols-5 gap-1 rounded-lg bg-zinc-900 p-1 ring-1 ring-zinc-800">
+                {ZOOM_DEPTH_OPTIONS.map((option) => (
+                  <button
+                    key={option.depth}
+                    disabled={!zoomEnabled}
+                    onClick={() => onZoomDepthChange?.(option.depth)}
+                    className={cn(
+                      "flex h-8 items-center justify-center rounded-md text-xs font-medium transition-all",
+                      !zoomEnabled && "opacity-40 cursor-not-allowed",
+                      selectedZoomDepth === option.depth
+                        ? "bg-zinc-700 text-white shadow-sm"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[10px] leading-tight text-zinc-600">
+                {zoomEnabled
+                  ? "Adjust timeline depth focus region."
+                  : "Select a zoom region in the timeline to adjust depth."}
+              </p>
+
+              {zoomEnabled && (
+                <button
+                  onClick={handleDeleteClick}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 py-2 text-xs font-medium text-red-400 transition-all hover:bg-red-500/20 hover:border-red-500/30 active:scale-[0.98]"
+                >
+                  <Trash2 size={14} />
+                  Delete Zoom Region
+                </button>
+              )}
+            </section>
+
+            {/* Section: Background */}
+            <section>
+              <label className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <Monitor size={12} /> Background
+              </label>
+
+              {/* Background Mode Switcher */}
+              <div className="mb-4 grid grid-cols-3 gap-1 rounded-lg bg-zinc-900 p-1">
+                <button
+                  onClick={() => setBgMode('image')}
+                  className={cn(
+                    "flex h-8 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all",
+                    bgMode === 'image' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'
+                  )}
+                >
+                  <ImageIcon size={14} /> Img
+                </button>
+                <button
+                  onClick={() => setBgMode('color')}
+                  className={cn(
+                    "flex h-8 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all",
+                    bgMode === 'color' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'
+                  )}
+                >
+                  <Palette size={14} /> Color
+                </button>
+                <button
+                  onClick={() => setBgMode('gradient')}
+                  className={cn(
+                    "flex h-8 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all",
+                    bgMode === 'gradient' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'
+                  )}
+                >
+                  <Layers size={14} /> Grad
+                </button>
+              </div>
+
+              {/* Background Content based on mode */}
+              {bgMode === 'image' && (
+                <div className="space-y-3">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageUpload}
+                    accept=".jpg,.jpeg,image/jpeg"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="group flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 py-3 text-xs font-medium text-zinc-400 transition-all hover:border-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                  >
+                    <Upload size={14} />
+                    Upload Custom Image
+                  </button>
+
+                  <div className="grid grid-cols-5 gap-1.5 max-h-[180px] overflow-y-auto pr-1">
+                    {customImages.map((imageUrl, idx) => (
+                      <div
+                        key={`custom-${idx}`}
+                        className={cn(
+                          "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer relative group bg-zinc-900",
+                          selected === imageUrl
+                            ? "border-emerald-500 ring-2 ring-emerald-500/30"
+                            : "border-zinc-800 hover:border-zinc-600"
+                        )}
+                        onClick={() => onWallpaperChange(imageUrl)}
+                      >
+                        <img
+                          src={imageUrl}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          onClick={(e) => handleRemoveCustomImage(imageUrl, e)}
+                          className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500/90 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        >
+                          <X className="w-2.5 h-2.5 text-white" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {finalWallpaperPaths.map((path) => (
+                      <WallpaperItem
+                        key={path}
+                        path={path}
+                        isSelected={isWallpaperSelected(path)}
+                        onClick={() => onWallpaperChange(path)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bgMode === 'color' && (
+                <div className="p-1">
+                  <Colorful
+                    color={hsva}
+                    disableAlpha={true}
+                    onChange={(color) => {
+                      setHsva(color.hsva);
+                      onWallpaperChange(hsvaToHex(color.hsva));
+                    }}
+                    style={{ width: '100%', borderRadius: '12px' }}
+                  />
+                </div>
+              )}
+
+              {bgMode === 'gradient' && (
+                <div className="grid grid-cols-5 gap-1.5 max-h-[180px] overflow-y-auto pr-1">
+                  {GRADIENTS.map((g) => (
+                    <GradientItem
+                      key={g}
+                      gradient={g}
+                      isSelected={gradient === g}
+                      onClick={() => { setGradient(g); onWallpaperChange(g); }}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Visual Effects Toggles */}
+              <div className="mt-4 space-y-3">
+                <ToggleItem
+                  label="Drop Shadow"
+                  active={showShadow || false}
+                  onClick={() => onShadowChange?.(!showShadow)}
+                />
+                <ToggleItem
+                  label="Blur Background"
+                  active={showBlur || false}
+                  onClick={() => onBlurChange?.(!showBlur)}
+                />
+              </div>
+            </section>
+
+            {/* Section: Crop */}
+            <section>
+              <button
+                onClick={() => setShowCropDropdown(!showCropDropdown)}
+                className="group flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 py-3 text-xs font-medium text-zinc-400 transition-all hover:border-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <Crop size={14} />
+                Crop Canvas Area
+              </button>
+            </section>
+          </div>
+        )}
+
+        {/* --- CURSOR TAB CONTENT --- */}
+        {activeTab === 'cursor' && cursorSettings && onCursorSettingsChange && (
+          <div className="space-y-8">
+
+            {/* Section: Cursor Style */}
+            <section>
+              <label className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <MousePointer2 size={12} /> Pointer Style
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                {CURSOR_STYLE_OPTIONS.map((option) => (
+                  <OptionButton
+                    key={option.value}
+                    active={cursorSettings.style === option.value}
+                    onClick={() => onCursorSettingsChange({ ...cursorSettings, style: option.value })}
+                    icon={option.value === 'default' ? <MousePointer2 size={14} /> : undefined}
+                    label={option.label}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {/* Section: Click Effects */}
+            <section>
+              <label className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <Zap size={12} /> Click Interactions
+              </label>
+
+              <div className="mb-4 grid grid-cols-4 gap-1 rounded-lg bg-zinc-900 p-1 ring-1 ring-zinc-800">
+                {CLICK_EFFECT_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => onCursorSettingsChange({ ...cursorSettings, clickEffect: option.value })}
+                    className={cn(
+                      "flex h-8 items-center justify-center rounded-md text-[11px] font-medium transition-all",
+                      cursorSettings.clickEffect === option.value
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Color Picker */}
+              {cursorSettings.clickEffect !== 'none' && (
+                <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5">
+                  <span className="text-xs text-zinc-400">Interaction Color</span>
+                  <div className="flex cursor-pointer items-center gap-2 rounded-md bg-zinc-950 px-2 py-1 ring-1 ring-zinc-800 hover:ring-zinc-700">
+                    <input
+                      type="color"
+                      value={cursorSettings.clickColor}
+                      onChange={(e) => onCursorSettingsChange({ ...cursorSettings, clickColor: e.target.value })}
+                      className="h-3 w-3 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                      style={{ WebkitAppearance: 'none' }}
+                    />
+                    <span className="font-mono text-[10px] text-zinc-400">{cursorSettings.clickColor}</span>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* Fallback if no cursor settings */}
+        {activeTab === 'cursor' && (!cursorSettings || !onCursorSettingsChange) && (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <MousePointer2 size={32} className="mb-3 text-zinc-700" />
+            <p className="text-xs text-zinc-500">Cursor settings not available</p>
+            <p className="mt-1 text-[10px] text-zinc-600">Record a video to enable cursor overlay</p>
+          </div>
+        )}
+
       </div>
-      
+
+      {/* Footer: Primary Action */}
+      <div className="border-t border-zinc-800 bg-zinc-950 p-5">
+        <button
+          onClick={onExport}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-900/20 transition-all hover:brightness-110 active:scale-[0.98]"
+        >
+          <Download size={16} />
+          Export Video
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            window.electronAPI?.openExternalUrl('https://github.com/siddharthvaddem/openscreen/issues/new');
+          }}
+          className="w-full mt-3 flex items-center justify-center gap-2 text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors py-1"
+        >
+          <Bug size={10} />
+          <span>Report a Bug</span>
+        </button>
+      </div>
+
+      {/* Crop Modal */}
       {showCropDropdown && cropRegion && onCropChange && (
         <>
-          <div 
+          <div
             className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 animate-in fade-in duration-200"
             onClick={() => setShowCropDropdown(false)}
           />
-          <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[60] bg-[#09090b] rounded-2xl shadow-2xl border border-white/10 p-8 w-[90vw] max-w-5xl animate-in zoom-in-95 duration-200">
+          <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[60] bg-zinc-950 rounded-2xl shadow-2xl border border-zinc-800 p-8 w-[90vw] max-w-5xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <span className="text-xl font-bold text-slate-200">Crop Video</span>
-                <p className="text-sm text-slate-400 mt-2">Drag on each side to adjust the crop area</p>
+                <span className="text-xl font-bold text-zinc-100">Crop Video</span>
+                <p className="text-sm text-zinc-400 mt-2">Drag on each side to adjust the crop area</p>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
                 onClick={() => setShowCropDropdown(false)}
-                className="hover:bg-white/10 text-slate-400 hover:text-white"
+                className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
               >
                 <X className="w-5 h-5" />
-              </Button>
+              </button>
             </div>
             <CropControl
               videoElement={videoElement || null}
@@ -327,164 +647,16 @@ export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, 
               onCropChange={onCropChange}
             />
             <div className="mt-6 flex justify-end">
-              <Button
+              <button
                 onClick={() => setShowCropDropdown(false)}
-                size="lg"
-                className="bg-[#34B27B] hover:bg-[#34B27B]/90 text-white"
+                className="px-6 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
               >
                 Done
-              </Button>
+              </button>
             </div>
           </div>
         </>
       )}
-
-      <Tabs defaultValue="image" className="flex-1 flex flex-col min-h-0">
-        <TabsList className="mb-4 bg-white/5 border border-white/5 p-1 w-full grid grid-cols-3 h-auto rounded-xl">
-          <TabsTrigger value="image" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 py-2 rounded-lg transition-all">Image</TabsTrigger>
-          <TabsTrigger value="color" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 py-2 rounded-lg transition-all">Color</TabsTrigger>
-          <TabsTrigger value="gradient" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 py-2 rounded-lg transition-all">Gradient</TabsTrigger>
-        </TabsList>
-        
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-2">
-          <TabsContent value="image" className="mt-0 space-y-3">
-            {/* Upload Button */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImageUpload}
-              accept=".jpg,.jpeg,image/jpeg"
-              className="hidden"
-            />
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              variant="outline"
-              className="w-full gap-2 bg-white/5 text-slate-200 border-white/10 hover:bg-[#34B27B] hover:text-white hover:border-[#34B27B] transition-all"
-            >
-              <Upload className="w-4 h-4" />
-              Upload Custom Image
-            </Button>
-
-            <div className="grid grid-cols-6 gap-2">
-              {/* Custom Images */}
-              {customImages.map((imageUrl, idx) => {
-                const isSelected = selected === imageUrl;
-                return (
-                  <div
-                    key={`custom-${idx}`}
-                    className={cn(
-                      "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer transition-all duration-200 relative group",
-                      isSelected
-                        ? "border-[#34B27B] ring-2 ring-[#34B27B]/30 scale-105 shadow-lg shadow-[#34B27B]/10"
-                        : "border-white/5 hover:border-white/20 hover:scale-105 opacity-70 hover:opacity-100"
-                    )}
-                    style={{ backgroundImage: `url(${imageUrl})`, backgroundSize: "cover", backgroundPosition: "center" }}
-                    aria-label={`Custom Image ${idx + 1}`}
-                    onClick={() => onWallpaperChange(imageUrl)}
-                    role="button"
-                  >
-                    <button
-                      onClick={(e) => handleRemoveCustomImage(imageUrl, e)}
-                      className="absolute top-1 right-1 w-5 h-5 bg-red-500/90 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                      aria-label="Remove custom image"
-                    >
-                      <X className="w-3 h-3 text-white" />
-                    </button>
-                  </div>
-                );
-              })}
-
-              {/* Preset Wallpapers */}
-              {(wallpaperPaths.length > 0 ? wallpaperPaths : WALLPAPER_RELATIVE.map(p => `/${p}`)).map((path, idx) => {
-                const isSelected = (() => {
-                  if (!selected) return false;
-                  
-                  if (selected === path) return true;
-                  try {
-                    const clean = (s: string) => s.replace(/^file:\/\//, '').replace(/^\//, '')
-                    if (clean(selected).endsWith(clean(path))) return true;
-                    if (clean(path).endsWith(clean(selected))) return true;
-                  } catch {
-                  }
-                  return false;
-                })();
-
-                return (
-                  <div
-                    key={path}
-                    className={cn(
-                      "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer transition-all duration-200",
-                      isSelected
-                        ? "border-[#34B27B] ring-2 ring-[#34B27B]/30 scale-105 shadow-lg shadow-[#34B27B]/10"
-                        : "border-white/5 hover:border-white/20 hover:scale-105 opacity-70 hover:opacity-100"
-                    )}
-                    style={{ backgroundImage: `url(${path})`, backgroundSize: "cover", backgroundPosition: "center" }}
-                    aria-label={`Wallpaper ${idx + 1}`}
-                    onClick={() => onWallpaperChange(path)}
-                    role="button"
-                  />
-                )
-              })}
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="color" className="mt-0">
-            <div className="p-1">
-              <Colorful
-                color={hsva}
-                disableAlpha={true}
-                onChange={(color) => {
-                  setHsva(color.hsva);
-                  onWallpaperChange(hsvaToHex(color.hsva));
-                }}
-                style={{ width: '100%', borderRadius: '12px' }}
-              />
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="gradient" className="mt-0">
-            <div className="grid grid-cols-6 gap-2">
-              {GRADIENTS.map((g, idx) => (
-                <div
-                  key={g}
-                  className={cn(
-                    "aspect-square rounded-lg border-2 overflow-hidden cursor-pointer transition-all duration-200",
-                    gradient === g 
-                      ? "border-[#34B27B] ring-2 ring-[#34B27B]/30 scale-105 shadow-lg shadow-[#34B27B]/10" 
-                      : "border-white/5 hover:border-white/20 hover:scale-105 opacity-70 hover:opacity-100"
-                  )}
-                  style={{ background: g }}
-                  aria-label={`Gradient ${idx + 1}`}
-                  onClick={() => { setGradient(g); onWallpaperChange(g); }}
-                  role="button"
-                />
-              ))}
-            </div>
-          </TabsContent>
-        </div>
-      </Tabs>
-
-      <div className="mt-6 pt-6 border-t border-white/5">
-        <Button
-          type="button"
-          size="lg"
-          onClick={onExport}
-          className="w-full py-6 text-lg font-semibold flex items-center justify-center gap-3 bg-[#34B27B] text-white rounded-xl shadow-lg shadow-[#34B27B]/20 hover:bg-[#34B27B]/90 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
-        >
-          <Download className="w-5 h-5" />
-          <span>Export Video</span>
-        </Button>
-        <button
-          type="button"
-          onClick={() => {
-            window.electronAPI?.openExternalUrl('https://github.com/siddharthvaddem/openscreen/issues/new');
-          }}
-          className="w-full mt-4 flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors py-2 group"
-        >
-          <Bug className="w-3 h-3 group-hover:text-[#34B27B] transition-colors" />
-          <span>Report a Bug</span>
-        </button>
-      </div>
-    </div>
+    </aside>
   );
 }

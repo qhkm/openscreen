@@ -7,6 +7,14 @@ module.exports = {
   ],
   theme: {
   	extend: {
+  		animation: {
+  			spin: 'spin 1s linear infinite',
+  		},
+  		keyframes: {
+  			spin: {
+  				to: { transform: 'rotate(360deg)' },
+  			},
+  		},
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',

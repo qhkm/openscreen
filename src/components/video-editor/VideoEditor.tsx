@@ -9,6 +9,7 @@ import PlaybackControls from "./PlaybackControls";
 import TimelineEditor from "./timeline/TimelineEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { ExportDialog } from "./ExportDialog";
+import { ExportOptionsDialog } from "./ExportOptionsDialog";
 
 import type { Span } from "dnd-timeline";
 import {
@@ -23,6 +24,7 @@ import {
   type CursorSettings,
   type MouseTrackingEvent,
   type SourceBounds,
+  type ExportOptions,
 } from "./types";
 import { VideoExporter, type ExportProgress } from "@/lib/exporter";
 
@@ -46,6 +48,7 @@ export default function VideoEditor() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showExportOptionsDialog, setShowExportOptionsDialog] = useState(false);
   const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
   const [mouseTrackingData, setMouseTrackingData] = useState<MouseTrackingEvent[]>([]);
   const [sourceBounds, setSourceBounds] = useState<SourceBounds | null>(null);
@@ -219,7 +222,7 @@ export default function VideoEditor() {
     }
   }, [selectedZoomId, zoomRegions]);
 
-  const handleExport = useCallback(async () => {
+  const handleOpenExportOptions = useCallback(() => {
     if (!videoPath) {
       toast.error('No video loaded');
       return;
@@ -231,6 +234,11 @@ export default function VideoEditor() {
       return;
     }
 
+    setShowExportOptionsDialog(true);
+  }, [videoPath]);
+
+  const handleExport = useCallback(async (options: ExportOptions) => {
+    setShowExportOptionsDialog(false);
     setShowExportDialog(true);
     setIsExporting(true);
     setExportProgress(null);
@@ -242,15 +250,14 @@ export default function VideoEditor() {
         videoPlaybackRef.current?.pause();
       }
 
-      const width = 1920;
-      const height = 1080;
+      const { resolution, frameRate, compression } = options;
 
       const exporter = new VideoExporter({
-        videoUrl: videoPath,
-        width,
-        height,
-        frameRate: 60,
-        bitrate: 15_000_000,
+        videoUrl: videoPath!,
+        width: resolution.width,
+        height: resolution.height,
+        frameRate,
+        bitrate: compression.bitrate,
         codec: 'avc1.640033',
         wallpaper,
         zoomRegions,
@@ -274,9 +281,9 @@ export default function VideoEditor() {
         const arrayBuffer = await result.blob.arrayBuffer();
         const timestamp = Date.now();
         const fileName = `export-${timestamp}.mp4`;
-        
+
         const saveResult = await window.electronAPI.saveExportedVideo(arrayBuffer, fileName);
-        
+
         if (saveResult.success) {
           toast.success('Video exported successfully!');
         } else {
@@ -315,15 +322,33 @@ export default function VideoEditor() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-foreground">Loading video...</div>
+      <div className="flex flex-col items-center justify-center h-screen bg-[#09090b]">
+        <div className="relative">
+          {/* Animated spinner */}
+          <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-emerald-500 animate-spin" />
+        </div>
+        <p className="mt-6 text-sm font-medium text-zinc-400">Loading your recording...</p>
+        <p className="mt-2 text-xs text-zinc-600">Preparing video editor</p>
       </div>
     );
   }
+
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-destructive">{error}</div>
+      <div className="flex flex-col items-center justify-center h-screen bg-[#09090b]">
+        <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-6">
+          <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <p className="text-sm font-medium text-zinc-200 mb-2">Failed to load video</p>
+        <p className="text-xs text-zinc-500 max-w-xs text-center mb-6">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+        >
+          Try Again
+        </button>
       </div>
     );
   }
@@ -421,7 +446,7 @@ export default function VideoEditor() {
           cursorSettings={cursorSettings}
           onCursorSettingsChange={setCursorSettings}
           videoElement={videoPlaybackRef.current?.video || null}
-          onExport={handleExport}
+          onExport={handleOpenExportOptions}
         />
       </div>
 
@@ -434,6 +459,13 @@ export default function VideoEditor() {
         isExporting={isExporting}
         error={exportError}
         onCancel={handleCancelExport}
+      />
+
+      <ExportOptionsDialog
+        isOpen={showExportOptionsDialog}
+        onClose={() => setShowExportOptionsDialog(false)}
+        onExport={handleExport}
+        videoDuration={duration}
       />
     </div>
   );

@@ -494,19 +494,19 @@ export class FrameRenderer {
 
   private setupCursor(): void {
     const cursorConfig = this.config.cursorConfig;
-    if (!cursorConfig || !this.app) return;
+    if (!cursorConfig || !this.app || !this.cameraContainer) return;
 
-    // Create cursor graphics container (added to stage so it's on top of video)
+    // Create cursor graphics container (added to cameraContainer so it transforms with zoom)
     this.clickEffectsContainer = new PIXI.Container();
     this.clickEffectsContainer.zIndex = 999;
-    this.app.stage.addChild(this.clickEffectsContainer);
+    this.cameraContainer.addChild(this.clickEffectsContainer);
 
     this.cursorGraphics = new PIXI.Graphics();
     this.cursorGraphics.zIndex = 1000;
-    this.app.stage.addChild(this.cursorGraphics);
+    this.cameraContainer.addChild(this.cursorGraphics);
 
     // Sort by zIndex
-    this.app.stage.sortableChildren = true;
+    this.cameraContainer.sortableChildren = true;
 
     // Normalize tracking data
     this.normalizeTrackingData();
@@ -549,7 +549,7 @@ export class FrameRenderer {
 
       this.normalizedTrackingData = mouseTrackingData.map(event => ({
         ...event,
-        timestamp: (event.timestamp - firstTimestamp) * 1000, // Convert to ms
+        timestamp: event.timestamp - firstTimestamp, // timestamps already in ms, normalize to start from 0
         x: (event.x - sourceBounds.x / dpr) * scaleX,
         y: (event.y - sourceBounds.y / dpr) * scaleY,
       }));
@@ -572,7 +572,7 @@ export class FrameRenderer {
 
       this.normalizedTrackingData = mouseTrackingData.map(event => ({
         ...event,
-        timestamp: (event.timestamp - firstTimestamp) * 1000,
+        timestamp: event.timestamp - firstTimestamp, // timestamps already in ms, normalize to start from 0
         x: (event.x - minX) * scaleX,
         y: (event.y - minY) * scaleY,
       }));

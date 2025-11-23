@@ -737,7 +737,16 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     video.pause();
     allowPlaybackRef.current = false;
     currentTimeRef.current = 0;
-    setVideoReady(true);
+    // Don't set videoReady here - wait for canplay event
+    // to ensure video frame data is actually available for WebGL texture
+  };
+
+  const handleCanPlay = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    const video = e.currentTarget;
+    // Only set ready once, and ensure we have valid dimensions
+    if (!videoReady && video.videoWidth > 0 && video.videoHeight > 0) {
+      setVideoReady(true);
+    }
   };
 
   const [resolvedWallpaper, setResolvedWallpaper] = useState<string | null>(null);
@@ -830,9 +839,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         ref={videoRef}
         src={videoPath}
         className="hidden"
-        preload="metadata"
+        preload="auto"
         playsInline
         onLoadedMetadata={handleLoadedMetadata}
+        onCanPlay={handleCanPlay}
         onDurationChange={e => {
           onDurationChange(e.currentTarget.duration);
         }}
