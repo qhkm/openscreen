@@ -18,6 +18,7 @@ interface Window {
     getSelectedSource: () => Promise<any>
     startMouseTracking: () => Promise<{ success: boolean; startTime?: number }>
     stopMouseTracking: () => Promise<{ success: boolean; data?: any }>
+    setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{
       success: boolean
       path?: string
@@ -34,6 +35,20 @@ interface Window {
     getRecordedVideoPath: () => Promise<{
       success: boolean
       path?: string
+      message?: string
+      error?: string
+    }>
+    getMouseTrackingData: () => Promise<{
+      success: boolean
+      data: Array<{
+        type: 'move' | 'down' | 'up' | 'click'
+        timestamp: number
+        x: number
+        y: number
+        button?: number
+        clicks?: number
+      }>
+      sourceBounds: { x: number; y: number; width: number; height: number } | null
       message?: string
       error?: string
     }>

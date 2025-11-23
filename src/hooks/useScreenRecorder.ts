@@ -70,6 +70,17 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       }
       const videoTrack = stream.current.getVideoTracks()[0];
       const { width = 1920, height = 1080 } = videoTrack.getSettings();
+
+      // Set source bounds using actual video stream dimensions
+      // This is crucial for accurate cursor coordinate mapping
+      await window.electronAPI.setSourceBounds({
+        x: 0,
+        y: 0,
+        width: width,
+        height: height,
+      });
+      console.log('Set source bounds from video stream:', { width, height });
+
       const totalPixels = width * height;
       let bitrate = 150_000_000;
       if (totalPixels > 1920 * 1080 && totalPixels <= 2560 * 1440) {

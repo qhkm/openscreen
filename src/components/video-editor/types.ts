@@ -48,3 +48,60 @@ function clamp(value: number, min: number, max: number) {
   if (Number.isNaN(value)) return (min + max) / 2;
   return Math.min(max, Math.max(min, value));
 }
+
+// =====================================
+// Cursor Overlay Types
+// =====================================
+
+export type CursorStyle = 'none' | 'default' | 'circle' | 'dot' | 'crosshair';
+
+export type ClickEffect = 'none' | 'ripple' | 'pulse' | 'ring';
+
+export interface CursorSettings {
+  style: CursorStyle;
+  size: number; // Size multiplier (0.5 - 2.0)
+  color: string; // Hex color for cursor
+  clickEffect: ClickEffect;
+  clickColor: string; // Hex color for click effect
+}
+
+export const DEFAULT_CURSOR_SETTINGS: CursorSettings = {
+  style: 'default',
+  size: 1,
+  color: '#FFFFFF',
+  clickEffect: 'ripple',
+  clickColor: '#34B27B',
+};
+
+export const CURSOR_STYLE_OPTIONS: Array<{ value: CursorStyle; label: string }> = [
+  { value: 'none', label: 'Hidden' },
+  { value: 'default', label: 'Default' },
+  { value: 'circle', label: 'Circle' },
+  { value: 'dot', label: 'Dot' },
+  { value: 'crosshair', label: 'Crosshair' },
+];
+
+export const CLICK_EFFECT_OPTIONS: Array<{ value: ClickEffect; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'ripple', label: 'Ripple' },
+  { value: 'pulse', label: 'Pulse' },
+  { value: 'ring', label: 'Ring' },
+];
+
+// Mouse tracking event from recording
+export interface MouseTrackingEvent {
+  type: 'move' | 'down' | 'up' | 'click';
+  timestamp: number; // ms since recording started
+  x: number; // screen X coordinate
+  y: number; // screen Y coordinate
+  button?: number;
+  clicks?: number;
+}
+
+// Source bounds for coordinate mapping
+export interface SourceBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}

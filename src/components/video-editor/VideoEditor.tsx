@@ -15,10 +15,14 @@ import {
   DEFAULT_ZOOM_DEPTH,
   clampFocusToDepth,
   DEFAULT_CROP_REGION,
+  DEFAULT_CURSOR_SETTINGS,
   type ZoomDepth,
   type ZoomFocus,
   type ZoomRegion,
   type CropRegion,
+  type CursorSettings,
+  type MouseTrackingEvent,
+  type SourceBounds,
 } from "./types";
 import { VideoExporter, type ExportProgress } from "@/lib/exporter";
 
@@ -42,6 +46,9 @@ export default function VideoEditor() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
+  const [mouseTrackingData, setMouseTrackingData] = useState<MouseTrackingEvent[]>([]);
+  const [sourceBounds, setSourceBounds] = useState<SourceBounds | null>(null);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -56,6 +63,14 @@ export default function VideoEditor() {
         } else {
           setError(result.message || 'Failed to load video');
         }
+
+        // Also load mouse tracking data
+        const trackingResult = await window.electronAPI.getMouseTrackingData();
+        if (trackingResult.success && trackingResult.data) {
+          setMouseTrackingData(trackingResult.data);
+          setSourceBounds(trackingResult.sourceBounds || null);
+          console.log('Loaded mouse tracking data:', trackingResult.data.length, 'events', 'sourceBounds:', trackingResult.sourceBounds);
+        }
       } catch (err) {
         setError('Error loading video: ' + String(err));
       } finally {
@@ -65,10 +80,9 @@ export default function VideoEditor() {
     loadVideo();
   }, []);
 
-  function togglePlayPause() {
+  const togglePlayPause = useCallback(() => {
     const playback = videoPlaybackRef.current;
     const video = playback?.video;
-    console.log('Toggle play/pause:', { hasVideo: !!video, isPlaying, action: isPlaying ? 'pause' : 'play' });
     if (!playback || !video) return;
 
     if (isPlaying) {
@@ -76,12 +90,39 @@ export default function VideoEditor() {
     } else {
       playback.play().catch(err => console.error('Video play failed:', err));
     }
-  }
+  }, [isPlaying]);
+
+  // Keyboard shortcut: Space to toggle play/pause
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlayPause();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlayPause]);
 
   function handleSeek(time: number) {
     const video = videoPlaybackRef.current?.video;
     if (!video) return;
-    video.currentTime = time;
+
+    // Update UI immediately for responsive feel
+    setCurrentTime(time);
+
+    // Use fastSeek for quicker seeking when available (less precise but faster)
+    if ('fastSeek' in video && typeof video.fastSeek === 'function') {
+      video.fastSeek(time);
+    } else {
+      video.currentTime = time;
+    }
   }
 
   const handleSelectZoom = useCallback((id: string | null) => {
@@ -153,7 +194,24 @@ export default function VideoEditor() {
     }
   }, [selectedZoomId]);
 
+  // Keyboard shortcut: Delete/Backspace to remove selected zoom region
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
 
+      // Delete/Backspace removes selected zoom region
+      if ((e.code === 'Delete' || e.code === 'Backspace') && selectedZoomId) {
+        e.preventDefault();
+        handleZoomDelete(selectedZoomId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedZoomId, handleZoomDelete]);
 
   useEffect(() => {
     if (selectedZoomId && !zoomRegions.some((region) => region.id === selectedZoomId)) {
@@ -304,6 +362,9 @@ export default function VideoEditor() {
                       showShadow={showShadow}
                       showBlur={showBlur}
                       cropRegion={cropRegion}
+                      cursorSettings={cursorSettings}
+                      mouseTrackingData={mouseTrackingData}
+                      sourceBounds={sourceBounds}
                     />
                   </div>
                 </div>
@@ -352,6 +413,8 @@ export default function VideoEditor() {
           onBlurChange={setShowBlur}
           cropRegion={cropRegion}
           onCropChange={setCropRegion}
+          cursorSettings={cursorSettings}
+          onCursorSettingsChange={setCursorSettings}
           videoElement={videoPlaybackRef.current?.video || null}
           onExport={handleExport}
         />

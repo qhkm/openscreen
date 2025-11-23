@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopMouseTracking: () => {
     return ipcRenderer.invoke('stop-mouse-tracking')
   },
+  setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => {
+    return ipcRenderer.invoke('set-source-bounds', bounds)
+  },
   storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('store-recorded-video', videoData, fileName)
   },
@@ -34,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRecordedVideoPath: () => {
     return ipcRenderer.invoke('get-recorded-video-path')
+  },
+  getMouseTrackingData: () => {
+    return ipcRenderer.invoke('get-mouse-tracking-data')
   },
   setRecordingState: (recording: boolean) => {
     return ipcRenderer.invoke('set-recording-state', recording)

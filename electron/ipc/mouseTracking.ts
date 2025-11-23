@@ -7,6 +7,7 @@ let isMouseTrackingActive = false
 let isHookStarted = false
 let recordingStartTime: number = 0
 let mouseEventData: MouseEvent[] = []
+let sourceBounds: SourceBounds | null = null
 
 export interface MouseEvent {
   type: 'move' | 'down' | 'up' | 'click'
@@ -17,10 +18,18 @@ export interface MouseEvent {
   clicks?: number
 }
 
+export interface SourceBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface MouseTrackingSession {
   startTime: number
   events: MouseEvent[]
   duration: number
+  sourceBounds?: SourceBounds
 }
 
 export function startMouseTracking() {
@@ -139,6 +148,23 @@ function setupMouseEventListeners() {
 
 export function getTrackingData(): MouseEvent[] {
   return [...mouseEventData]
+}
+
+export function setSourceBounds(bounds: SourceBounds) {
+  sourceBounds = bounds
+  console.log('Source bounds set:', bounds)
+}
+
+export function getSourceBounds(): SourceBounds | null {
+  return sourceBounds
+}
+
+// Get tracking data with metadata for saving to JSON
+export function getTrackingDataWithMetadata(): { events: MouseEvent[]; sourceBounds: SourceBounds | null } {
+  return {
+    events: [...mouseEventData],
+    sourceBounds: sourceBounds,
+  }
 }
 
 export function cleanupMouseTracking() {

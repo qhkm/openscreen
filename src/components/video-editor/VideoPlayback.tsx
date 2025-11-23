@@ -2,7 +2,7 @@ import type React from "react";
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
 import { getAssetPath } from "@/lib/assetPath";
 import * as PIXI from 'pixi.js';
-import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth } from "./types";
+import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type CursorSettings, type MouseTrackingEvent, type SourceBounds } from "./types";
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -11,6 +11,8 @@ import { updateOverlayIndicator } from "./videoPlayback/overlayUtils";
 import { layoutVideoContent as layoutVideoContentUtil } from "./videoPlayback/layoutUtils";
 import { applyZoomTransform } from "./videoPlayback/zoomTransform";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
+import { CursorRenderer } from "./videoPlayback/cursorRenderer";
+import { DEFAULT_CURSOR_SETTINGS } from "./types";
 
 interface VideoPlaybackProps {
   videoPath: string;
@@ -27,6 +29,9 @@ interface VideoPlaybackProps {
   showShadow?: boolean;
   showBlur?: boolean;
   cropRegion?: import('./types').CropRegion;
+  cursorSettings?: CursorSettings;
+  mouseTrackingData?: MouseTrackingEvent[];
+  sourceBounds?: SourceBounds | null;
 }
 
 export interface VideoPlaybackRef {
@@ -53,6 +58,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   showShadow,
   showBlur,
   cropRegion,
+  cursorSettings,
+  mouseTrackingData,
+  sourceBounds,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -83,6 +91,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const allowPlaybackRef = useRef(false);
   const lockedVideoDimensionsRef = useRef<{ width: number; height: number } | null>(null);
   const layoutVideoContentRef = useRef<(() => void) | null>(null);
+  const cursorRendererRef = useRef<CursorRenderer | null>(null);
 
   const clampFocusToStage = useCallback((focus: ZoomFocus, depth: ZoomDepth) => {
     return clampFocusToStageUtil(focus, depth, stageSizeRef.current);
@@ -285,6 +294,50 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
+  // Update cursor settings when they change
+  useEffect(() => {
+    if (cursorRendererRef.current && cursorSettings) {
+      cursorRendererRef.current.setSettings(cursorSettings);
+    }
+  }, [cursorSettings]);
+
+  // Update mouse tracking data when it changes or when video/pixi becomes ready
+  useEffect(() => {
+    if (cursorRendererRef.current && mouseTrackingData && mouseTrackingData.length > 0 && videoReady && pixiReady) {
+      const video = videoRef.current;
+      if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+        console.log('Setting cursor tracking data:', {
+          eventCount: mouseTrackingData.length,
+          videoSize: { width: video.videoWidth, height: video.videoHeight },
+          sourceBounds,
+          firstEvent: mouseTrackingData[0],
+          lastEvent: mouseTrackingData[mouseTrackingData.length - 1],
+        });
+        cursorRendererRef.current.setTrackingData(
+          mouseTrackingData,
+          video.videoWidth,
+          video.videoHeight,
+          sourceBounds
+        );
+      }
+    }
+  }, [mouseTrackingData, videoReady, pixiReady, sourceBounds]);
+
+  // Reset click tracking when video is seeked (to avoid duplicate click effects)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleSeeked = () => {
+      if (cursorRendererRef.current) {
+        cursorRendererRef.current.resetClickTracking();
+      }
+    };
+
+    video.addEventListener('seeked', handleSeeked);
+    return () => video.removeEventListener('seeked', handleSeeked);
+  }, []);
+
   useEffect(() => {
     if (!pixiReady || !videoReady) return;
 
@@ -431,13 +484,21 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       const videoContainer = new PIXI.Container();
       videoContainerRef.current = videoContainer;
       cameraContainer.addChild(videoContainer);
-      
+
+      // Initialize cursor renderer on camera container so it zooms with video
+      const cursorRenderer = new CursorRenderer(cameraContainer, cursorSettings || DEFAULT_CURSOR_SETTINGS);
+      cursorRendererRef.current = cursorRenderer;
+
       setPixiReady(true);
     })();
 
     return () => {
       mounted = false;
       setPixiReady(false);
+      if (cursorRendererRef.current) {
+        cursorRendererRef.current.destroy();
+        cursorRendererRef.current = null;
+      }
       if (app && app.renderer) {
         app.destroy(true, { children: true, texture: true, textureSource: true });
       }
@@ -646,6 +707,19 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       );
 
       applyTransform(motionIntensity);
+
+      // Update cursor position for current video time
+      if (cursorRendererRef.current) {
+        // Update video layout for proper cursor positioning
+        cursorRendererRef.current.setVideoLayout(
+          baseScaleRef.current,
+          baseOffsetRef.current.x,
+          baseOffsetRef.current.y
+        );
+        cursorRendererRef.current.updateForTime(
+          currentTimeRef.current * 1000 // Convert seconds to ms
+        );
+      }
     };
 
     app.ticker.add(ticker);

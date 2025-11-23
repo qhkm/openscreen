@@ -31,9 +31,24 @@ interface Window {
     getSelectedSource: () => Promise<any>
     startMouseTracking: () => Promise<void>
     stopMouseTracking: () => Promise<void>
+    setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
     storeMouseTrackingData: (fileName: string) => Promise<{ success: boolean; path?: string; eventCount?: number; message?: string }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
+    getMouseTrackingData: () => Promise<{
+      success: boolean
+      data: Array<{
+        type: 'move' | 'down' | 'up' | 'click'
+        timestamp: number
+        x: number
+        y: number
+        button?: number
+        clicks?: number
+      }>
+      sourceBounds: { x: number; y: number; width: number; height: number } | null
+      message?: string
+      error?: string
+    }>
     setRecordingState: (recording: boolean) => Promise<void>
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
