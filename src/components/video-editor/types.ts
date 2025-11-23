@@ -105,3 +105,57 @@ export interface SourceBounds {
   width: number;
   height: number;
 }
+
+// =====================================
+// Export Options Types
+// =====================================
+
+export type ExportFormat = 'mp4' | 'gif';
+export type ExportDestination = 'file' | 'clipboard';
+export type CompressionPreset = 'studio' | 'social' | 'web' | 'web-low';
+
+export interface ResolutionOption {
+  key: string;
+  label: string;
+  width: number;
+  height: number;
+  description: string;
+}
+
+export interface CompressionOption {
+  key: CompressionPreset;
+  label: string;
+  bitrate: number; // in bps
+  description: string;
+}
+
+export interface ExportOptions {
+  format: ExportFormat;
+  frameRate: number;
+  resolution: ResolutionOption;
+  compression: CompressionOption;
+  destination: ExportDestination;
+}
+
+export const RESOLUTION_OPTIONS: ResolutionOption[] = [
+  { key: '720p', label: '720p', width: 1280, height: 720, description: '1280px × 720px' },
+  { key: '1080p', label: '1080p', width: 1920, height: 1080, description: '1920px × 1080px' },
+  { key: '4k', label: '4K', width: 3840, height: 2160, description: '3840px × 2160px' },
+];
+
+export const COMPRESSION_OPTIONS: CompressionOption[] = [
+  { key: 'studio', label: 'Studio', bitrate: 50_000_000, description: 'Highest quality, larger file size' },
+  { key: 'social', label: 'Social Media', bitrate: 15_000_000, description: 'Optimized for social platforms' },
+  { key: 'web', label: 'Web', bitrate: 8_000_000, description: 'Good for directly playing on websites' },
+  { key: 'web-low', label: 'Web (Low)', bitrate: 4_000_000, description: 'Smaller file, lower quality' },
+];
+
+export const FRAME_RATE_OPTIONS = [24, 30, 60];
+
+export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
+  format: 'mp4',
+  frameRate: 60,
+  resolution: RESOLUTION_OPTIONS[1], // 1080p
+  compression: COMPRESSION_OPTIONS[2], // Web
+  destination: 'file',
+};
