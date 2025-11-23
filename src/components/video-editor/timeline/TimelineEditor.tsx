@@ -309,20 +309,31 @@ function Timeline({
 }) {
   const { setTimelineRef, style, sidebarWidth, range, pixelsToValue } = useTimelineContext();
 
-  const handleTimelineClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  const handleTimelinePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!onSeek || videoDurationMs <= 0) return;
-    onSelectZoom?.(null);
+
+    // Only handle left click (button 0)
+    if (e.button !== 0) return;
+
+    // Check if the click is on an item (zoom region) - if so, let dnd-timeline handle it
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-timeline-item]')) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left - sidebarWidth;
-    
+
     if (clickX < 0) return;
-    
+
     const relativeMs = pixelsToValue(clickX);
     const absoluteMs = Math.max(0, Math.min(range.start + relativeMs, videoDurationMs));
     const timeInSeconds = absoluteMs / 1000;
-    
+
+    // Deselect zoom first, then seek (batch state updates)
+    onSelectZoom?.(null);
     onSeek(timeInSeconds);
+
+    // Prevent default to stop any other handlers
+    e.stopPropagation();
   }, [onSeek, onSelectZoom, videoDurationMs, sidebarWidth, range.start, pixelsToValue]);
 
   return (
@@ -330,7 +341,7 @@ function Timeline({
       ref={setTimelineRef}
       style={style}
       className="select-none bg-[#09090b] min-h-[140px] relative cursor-pointer group"
-      onClick={handleTimelineClick}
+      onPointerDown={handleTimelinePointerDown}
     >
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px)] bg-[length:20px_100%] pointer-events-none" />
       <TimelineAxis intervalMs={intervalMs} videoDurationMs={videoDurationMs} currentTimeMs={currentTimeMs} />
@@ -413,34 +424,92 @@ export default function TimelineEditor({
       return;
     }
 
-    const defaultDuration = Math.min(
-      Math.max(3000, safeMinDurationMs),
-      totalMs,
-    );
+    const preferredDuration = Math.min(3000, totalMs);
+    const minDuration = Math.max(500, safeMinDurationMs); // Minimum 500ms zoom
 
-    if (defaultDuration <= 0) {
+    if (minDuration <= 0) {
       return;
     }
 
-    let startPos = 0;
     const sorted = [...zoomRegions].sort((a, b) => a.startMs - b.startMs);
 
-    for (const region of sorted) {
-      if (startPos + defaultDuration <= region.startMs) {
-        break;
+    // Start from playhead position
+    const playheadMs = currentTimeMs;
+
+    // Check if there's space at playhead position
+    const findGapAtPosition = (startPos: number): { start: number; end: number } | null => {
+      // Find overlapping or next region
+      for (const region of sorted) {
+        // If startPos is inside a region, no gap here
+        if (startPos >= region.startMs && startPos < region.endMs) {
+          return null;
+        }
+        // If region is after startPos, gap ends at region start
+        if (region.startMs > startPos) {
+          return { start: startPos, end: region.startMs };
+        }
+        // If region ends before startPos, continue checking
+        if (region.endMs <= startPos) {
+          continue;
+        }
       }
-      startPos = Math.max(startPos, region.endMs);
+      // No region after startPos, gap extends to end
+      return { start: startPos, end: totalMs };
+    };
+
+    // Try to add at playhead first
+    let gap = findGapAtPosition(playheadMs);
+
+    // If playhead is inside a zoom or no space, find next available gap
+    if (!gap || gap.end - gap.start < minDuration) {
+      // Find all available gaps
+      const gaps: { start: number; end: number; size: number }[] = [];
+      let currentPos = 0;
+
+      for (const region of sorted) {
+        if (currentPos < region.startMs) {
+          gaps.push({
+            start: currentPos,
+            end: region.startMs,
+            size: region.startMs - currentPos,
+          });
+        }
+        currentPos = Math.max(currentPos, region.endMs);
+      }
+
+      if (currentPos < totalMs) {
+        gaps.push({
+          start: currentPos,
+          end: totalMs,
+          size: totalMs - currentPos,
+        });
+      }
+
+      // Filter gaps that can fit at least minDuration
+      const viableGaps = gaps.filter(g => g.size >= minDuration);
+
+      if (viableGaps.length === 0) {
+        toast.error("No space available", {
+          description: "Remove or resize existing zoom regions to add more.",
+        });
+        return;
+      }
+
+      // Prefer gap closest to playhead, otherwise use largest
+      const gapsAfterPlayhead = viableGaps.filter(g => g.start >= playheadMs);
+      const bestGap = gapsAfterPlayhead.length > 0
+        ? gapsAfterPlayhead[0]
+        : viableGaps.reduce((a, b) => a.size > b.size ? a : b);
+
+      gap = { start: bestGap.start, end: bestGap.end };
     }
 
-    if (startPos + defaultDuration > totalMs) {
-      toast.error("No space available", {
-        description: "Remove or resize existing zoom regions to add more.",
-      });
-      return;
-    }
+    // Use preferred duration if it fits, otherwise use the gap size
+    const availableSpace = gap.end - gap.start;
+    const duration = Math.min(preferredDuration, availableSpace);
 
-    onZoomAdded({ start: startPos, end: startPos + defaultDuration });
-  }, [videoDuration, totalMs, timelineScale.defaultItemDurationMs, safeMinDurationMs, zoomRegions, onZoomAdded]);
+    onZoomAdded({ start: gap.start, end: gap.start + duration });
+  }, [videoDuration, totalMs, safeMinDurationMs, zoomRegions, onZoomAdded, currentTimeMs]);
 
   const clampedRange = useMemo<Range>(() => {
     if (totalMs === 0) {

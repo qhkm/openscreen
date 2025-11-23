@@ -17,16 +17,21 @@ export function SourceSelector() {
   const [sources, setSources] = useState<DesktopSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
   const [loading, setLoading] = useState(true);
+  const [permissionError, setPermissionError] = useState(false);
 
   useEffect(() => {
     async function fetchSources() {
       setLoading(true);
+      setPermissionError(false);
       try {
         const rawSources = await window.electronAPI.getSources({
           types: ['screen', 'window'],
           thumbnailSize: { width: 320, height: 180 },
           fetchWindowIcons: true
         });
+        if (rawSources.length === 0) {
+          setPermissionError(true);
+        }
         setSources(
           rawSources.map(source => ({
             id: source.id,
@@ -41,6 +46,7 @@ export function SourceSelector() {
         );
       } catch (error) {
         console.error('Error loading sources:', error);
+        setPermissionError(true);
       } finally {
         setLoading(false);
       }
@@ -56,12 +62,52 @@ export function SourceSelector() {
     if (selectedSource) await window.electronAPI.selectSource(selectedSource);
   };
 
+  const handleOpenSettings = async () => {
+    await window.electronAPI.openExternalUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  };
+
   if (loading) {
     return (
       <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
         <div className="text-center">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-zinc-600 mx-auto mb-2" />
           <p className="text-xs text-zinc-300">Loading sources...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (permissionError) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center ${styles.glassContainer}`}>
+        <div className="text-center px-8 max-w-md">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/20 flex items-center justify-center">
+            <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-zinc-100 mb-2">Screen Recording Permission Required</h2>
+          <p className="text-sm text-zinc-400 mb-4">
+            OpenScreen needs permission to record your screen. Please enable Screen Recording for Electron in System Settings.
+          </p>
+          <div className="space-y-2">
+            <Button
+              onClick={handleOpenSettings}
+              className="w-full bg-[#34B27B] text-white hover:bg-[#34B27B]/80"
+            >
+              Open System Settings
+            </Button>
+            <p className="text-xs text-zinc-500">
+              After enabling, restart the app for changes to take effect.
+            </p>
+          </div>
+        </div>
+        <div className="border-t border-zinc-800 p-2 w-full max-w-xl mt-6">
+          <div className="flex justify-center">
+            <Button variant="outline" onClick={() => window.close()} className="px-4 py-1 text-xs bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700">
+              Close
+            </Button>
+          </div>
         </div>
       </div>
     );

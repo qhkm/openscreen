@@ -33,9 +33,10 @@ export default function Item({ id, span, rowId, isSelected = false, onSelect, zo
   return (
     <div
       ref={setNodeRef}
-      style={itemStyle}
+      style={{ ...itemStyle, pointerEvents: 'auto' }}
       {...listeners}
       {...attributes}
+      data-timeline-item="true"
       onPointerDownCapture={() => onSelect?.()}
       className="group"
     >

@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import Colorful from '@uiw/react-color-colorful';
 import { hsvaToHex } from '@uiw/color-convert';
-import { Trash2, Download, Crop, X, Bug, Upload } from "lucide-react";
+import { Trash2, Download, Crop, X, Bug, Upload, MousePointer2 } from "lucide-react";
 import { toast } from "sonner";
-import type { ZoomDepth, CropRegion } from "./types";
+import type { ZoomDepth, CropRegion, CursorSettings } from "./types";
+import { CURSOR_STYLE_OPTIONS, CLICK_EFFECT_OPTIONS } from "./types";
 import { CropControl } from "./CropControl";
 
 const WALLPAPER_COUNT = 23;
@@ -56,6 +57,8 @@ interface SettingsPanelProps {
   onCropChange?: (region: CropRegion) => void;
   videoElement?: HTMLVideoElement | null;
   onExport?: () => void;
+  cursorSettings?: CursorSettings;
+  onCursorSettingsChange?: (settings: CursorSettings) => void;
 }
 
 export default SettingsPanel;
@@ -68,7 +71,7 @@ const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
   { depth: 5, label: "3.5×" },
 ];
 
-export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, onZoomDepthChange, selectedZoomId, onZoomDelete, showShadow, onShadowChange, showBlur, onBlurChange, cropRegion, onCropChange, videoElement, onExport }: SettingsPanelProps) {
+export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, onZoomDepthChange, selectedZoomId, onZoomDelete, showShadow, onShadowChange, showBlur, onBlurChange, cropRegion, onCropChange, videoElement, onExport, cursorSettings, onCursorSettingsChange }: SettingsPanelProps) {
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +215,76 @@ export function SettingsPanel({ selected, onWallpaperChange, selectedZoomDepth, 
           />
         </div>
       </div>
+
+      {/* Cursor Settings */}
+      {cursorSettings && onCursorSettingsChange && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <MousePointer2 className="w-4 h-4 text-slate-400" />
+            <span className="text-sm font-medium text-slate-200">Cursor</span>
+          </div>
+
+          {/* Cursor Style */}
+          <div className="mb-4">
+            <span className="text-xs text-slate-400 mb-2 block">Style</span>
+            <div className="grid grid-cols-5 gap-1.5">
+              {CURSOR_STYLE_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onCursorSettingsChange({ ...cursorSettings, style: option.value })}
+                  className={cn(
+                    "h-auto w-full rounded-lg border px-1 py-2 text-center shadow-sm transition-all text-[10px]",
+                    cursorSettings.style === option.value
+                      ? "border-[#34B27B] bg-[#34B27B] text-white"
+                      : "border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                  )}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Click Effect */}
+          <div className="mb-4">
+            <span className="text-xs text-slate-400 mb-2 block">Click Effect</span>
+            <div className="grid grid-cols-4 gap-1.5">
+              {CLICK_EFFECT_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onCursorSettingsChange({ ...cursorSettings, clickEffect: option.value })}
+                  className={cn(
+                    "h-auto w-full rounded-lg border px-1 py-2 text-center shadow-sm transition-all text-[10px]",
+                    cursorSettings.clickEffect === option.value
+                      ? "border-[#34B27B] bg-[#34B27B] text-white"
+                      : "border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                  )}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Click Effect Color (only show if click effect is not none) */}
+          {cursorSettings.clickEffect !== 'none' && (
+            <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+              <div className="text-xs text-slate-400">Click Color</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={cursorSettings.clickColor}
+                  onChange={(e) => onCursorSettingsChange({ ...cursorSettings, clickColor: e.target.value })}
+                  className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
+                />
+                <span className="text-xs text-slate-500 font-mono">{cursorSettings.clickColor}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mb-8">
         <Button

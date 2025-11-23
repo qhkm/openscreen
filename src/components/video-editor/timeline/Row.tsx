@@ -11,9 +11,11 @@ export default function Row({ id, children }: RowProps) {
   return (
     <div
       className="border-b border-[#18181b] bg-[#18181b]"
-      style={{ ...rowWrapperStyle, minHeight: 88 }}
+      style={{ ...rowWrapperStyle, minHeight: 56, pointerEvents: 'none' }}
     >
-      <div ref={setNodeRef} style={rowStyle}>
+      {/* Inner row container - pointer-events:none so clicks pass through to Timeline,
+          but children (Items) have pointer-events:auto */}
+      <div ref={setNodeRef} style={{ ...rowStyle, pointerEvents: 'none' }}>
         {children}
       </div>
     </div>
