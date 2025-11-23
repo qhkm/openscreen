@@ -18,7 +18,6 @@ export class CursorRenderer {
   private activeClickEffects: ClickEffectInstance[] = [];
   private settings: CursorSettings;
   private trackingData: MouseTrackingEvent[] = [];
-  private screenBounds = { width: 1920, height: 1080 };
   private videoLayout = { scale: 1, offsetX: 0, offsetY: 0 };
 
   constructor(parentContainer: PIXI.Container, settings: CursorSettings) {
@@ -137,7 +136,6 @@ export class CursorRenderer {
     } else {
       this.trackingData = data;
     }
-    this.screenBounds = { width: videoWidth, height: videoHeight };
   }
 
   setVideoLayout(scale: number, offsetX: number, offsetY: number) {

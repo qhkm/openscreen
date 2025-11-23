@@ -1,10 +1,11 @@
 import * as PIXI from 'pixi.js';
-import type { ZoomRegion, CropRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, MouseTrackingEvent } from '@/components/video-editor/types';
 import { ZOOM_DEPTH_SCALES } from '@/components/video-editor/types';
 import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoomRegionUtils';
 import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoomTransform';
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA, VIEWPORT_SCALE } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
+import type { CursorConfig } from './types';
 
 interface FrameRenderConfig {
   width: number;
@@ -16,6 +17,7 @@ interface FrameRenderConfig {
   cropRegion: CropRegion;
   videoWidth: number;
   videoHeight: number;
+  cursorConfig?: CursorConfig;
 }
 
 interface AnimationState {
@@ -42,6 +44,14 @@ export class FrameRenderer {
   private animationState: AnimationState;
   private layoutCache: any = null;
   private currentVideoTime = 0;
+
+  // Cursor rendering state
+  private normalizedTrackingData: MouseTrackingEvent[] = [];
+  private cursorGraphics: PIXI.Graphics | null = null;
+  private clickEffectsContainer: PIXI.Container | null = null;
+  private lastClickTime = -1;
+  private readonly CLICK_EFFECT_DURATION = 400; // ms
+  private readonly BASE_CURSOR_SIZE = 24;
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
@@ -123,6 +133,11 @@ export class FrameRenderer {
     this.maskGraphics = new PIXI.Graphics();
     this.videoContainer.addChild(this.maskGraphics);
     this.videoContainer.mask = this.maskGraphics;
+
+    // Setup cursor overlay
+    if (this.config.cursorConfig) {
+      this.setupCursor();
+    }
   }
 
   private async setupBackground(): Promise<void> {
@@ -284,6 +299,11 @@ export class FrameRenderer {
       motionIntensity: maxMotionIntensity,
       isPlaying: true,
     });
+
+    // Update cursor position for this frame
+    if (this.config.cursorConfig) {
+      this.updateCursorForFrame(timeMs);
+    }
 
     // Render the PixiJS stage to its canvas (video only, transparent background)
     this.app.renderer.render(this.app.stage);
@@ -470,12 +490,353 @@ export class FrameRenderer {
     }
   }
 
+  // === Cursor Rendering Methods ===
+
+  private setupCursor(): void {
+    const cursorConfig = this.config.cursorConfig;
+    if (!cursorConfig || !this.app) return;
+
+    // Create cursor graphics container (added to stage so it's on top of video)
+    this.clickEffectsContainer = new PIXI.Container();
+    this.clickEffectsContainer.zIndex = 999;
+    this.app.stage.addChild(this.clickEffectsContainer);
+
+    this.cursorGraphics = new PIXI.Graphics();
+    this.cursorGraphics.zIndex = 1000;
+    this.app.stage.addChild(this.cursorGraphics);
+
+    // Sort by zIndex
+    this.app.stage.sortableChildren = true;
+
+    // Normalize tracking data
+    this.normalizeTrackingData();
+  }
+
+  private normalizeTrackingData(): void {
+    const cursorConfig = this.config.cursorConfig;
+    if (!cursorConfig) return;
+
+    const { mouseTrackingData, sourceBounds } = cursorConfig;
+    const { videoWidth, videoHeight } = this.config;
+
+    if (mouseTrackingData.length === 0) {
+      this.normalizedTrackingData = [];
+      return;
+    }
+
+    const firstTimestamp = mouseTrackingData[0].timestamp;
+
+    // Use the same DPR logic as cursorRenderer.ts
+    // During export, we're running in a browser context where we can check devicePixelRatio
+    const dpr = window.devicePixelRatio || 2;
+
+    if (sourceBounds && sourceBounds.width > 0 && sourceBounds.height > 0) {
+      // Convert source bounds from physical to logical pixels
+      const logicalSourceWidth = sourceBounds.width / dpr;
+      const logicalSourceHeight = sourceBounds.height / dpr;
+
+      // Scale from logical mouse coords to video coords
+      const scaleX = videoWidth / logicalSourceWidth;
+      const scaleY = videoHeight / logicalSourceHeight;
+
+      console.log('[FrameRenderer] Cursor coordinate mapping:', {
+        sourceBounds,
+        videoSize: { width: videoWidth, height: videoHeight },
+        dpr,
+        logicalSource: { width: logicalSourceWidth, height: logicalSourceHeight },
+        scaleFactors: { x: scaleX, y: scaleY },
+      });
+
+      this.normalizedTrackingData = mouseTrackingData.map(event => ({
+        ...event,
+        timestamp: (event.timestamp - firstTimestamp) * 1000, // Convert to ms
+        x: (event.x - sourceBounds.x / dpr) * scaleX,
+        y: (event.y - sourceBounds.y / dpr) * scaleY,
+      }));
+    } else {
+      // Fallback: use mouse range heuristic
+      let minX = Infinity, minY = Infinity;
+      let maxX = -Infinity, maxY = -Infinity;
+
+      for (const event of mouseTrackingData) {
+        if (event.x < minX) minX = event.x;
+        if (event.y < minY) minY = event.y;
+        if (event.x > maxX) maxX = event.x;
+        if (event.y > maxY) maxY = event.y;
+      }
+
+      const mouseRangeX = maxX - minX;
+      const mouseRangeY = maxY - minY;
+      const scaleX = videoWidth / Math.max(mouseRangeX, 1);
+      const scaleY = videoHeight / Math.max(mouseRangeY, 1);
+
+      this.normalizedTrackingData = mouseTrackingData.map(event => ({
+        ...event,
+        timestamp: (event.timestamp - firstTimestamp) * 1000,
+        x: (event.x - minX) * scaleX,
+        y: (event.y - minY) * scaleY,
+      }));
+    }
+  }
+
+  private interpolateCursorPosition(timeMs: number): { x: number; y: number } | null {
+    if (this.normalizedTrackingData.length === 0) return null;
+
+    let before: MouseTrackingEvent | null = null;
+    let after: MouseTrackingEvent | null = null;
+
+    for (let i = 0; i < this.normalizedTrackingData.length; i++) {
+      const event = this.normalizedTrackingData[i];
+      if (event.timestamp <= timeMs) {
+        before = event;
+      } else {
+        after = event;
+        break;
+      }
+    }
+
+    if (!before) {
+      const first = this.normalizedTrackingData[0];
+      return { x: first.x, y: first.y };
+    }
+
+    if (!after) {
+      return { x: before.x, y: before.y };
+    }
+
+    // Interpolate between events
+    const t = (timeMs - before.timestamp) / (after.timestamp - before.timestamp);
+    return {
+      x: before.x + (after.x - before.x) * t,
+      y: before.y + (after.y - before.y) * t,
+    };
+  }
+
+  private drawCursorAtPosition(x: number, y: number): void {
+    const cursorConfig = this.config.cursorConfig;
+    if (!cursorConfig || !this.cursorGraphics) return;
+
+    const { cursorSettings } = cursorConfig;
+    const g = this.cursorGraphics;
+    g.clear();
+
+    if (cursorSettings.style === 'none') return;
+
+    const size = this.BASE_CURSOR_SIZE * cursorSettings.size;
+    const color = this.hexToNumber(cursorSettings.color);
+
+    // Position the cursor graphics
+    g.position.set(x, y);
+
+    switch (cursorSettings.style) {
+      case 'default':
+        this.drawDefaultCursor(g, size, color);
+        break;
+      case 'circle':
+        this.drawCircleCursor(g, size, color);
+        break;
+      case 'dot':
+        this.drawDotCursor(g, size, color);
+        break;
+      case 'crosshair':
+        this.drawCrosshairCursor(g, size, color);
+        break;
+    }
+  }
+
+  private drawDefaultCursor(g: PIXI.Graphics, size: number, color: number): void {
+    // Arrow pointer shape
+    g.fill({ color, alpha: 1 });
+    g.moveTo(0, 0);
+    g.lineTo(0, size);
+    g.lineTo(size * 0.3, size * 0.75);
+    g.lineTo(size * 0.45, size * 1.1);
+    g.lineTo(size * 0.6, size * 1.05);
+    g.lineTo(size * 0.45, size * 0.7);
+    g.lineTo(size * 0.75, size * 0.7);
+    g.closePath();
+    g.fill();
+
+    // Black outline
+    g.stroke({ color: 0x000000, width: 1.5, alpha: 0.8 });
+    g.moveTo(0, 0);
+    g.lineTo(0, size);
+    g.lineTo(size * 0.3, size * 0.75);
+    g.lineTo(size * 0.45, size * 1.1);
+    g.lineTo(size * 0.6, size * 1.05);
+    g.lineTo(size * 0.45, size * 0.7);
+    g.lineTo(size * 0.75, size * 0.7);
+    g.closePath();
+    g.stroke();
+  }
+
+  private drawCircleCursor(g: PIXI.Graphics, size: number, color: number): void {
+    const radius = size / 2;
+    g.fill({ color, alpha: 0.3 });
+    g.stroke({ color, width: 2, alpha: 1 });
+    g.circle(0, 0, radius);
+    g.fill();
+    g.stroke();
+
+    // Center dot
+    g.fill({ color, alpha: 1 });
+    g.circle(0, 0, 3);
+    g.fill();
+  }
+
+  private drawDotCursor(g: PIXI.Graphics, size: number, color: number): void {
+    const radius = size / 4;
+    g.fill({ color, alpha: 1 });
+    g.circle(0, 0, radius);
+    g.fill();
+
+    // Subtle glow
+    g.fill({ color, alpha: 0.3 });
+    g.circle(0, 0, radius * 2);
+    g.fill();
+  }
+
+  private drawCrosshairCursor(g: PIXI.Graphics, size: number, color: number): void {
+    const halfSize = size / 2;
+    const gap = 4;
+
+    g.stroke({ color, width: 2, alpha: 1 });
+
+    // Horizontal lines
+    g.moveTo(-halfSize, 0);
+    g.lineTo(-gap, 0);
+    g.moveTo(gap, 0);
+    g.lineTo(halfSize, 0);
+
+    // Vertical lines
+    g.moveTo(0, -halfSize);
+    g.lineTo(0, -gap);
+    g.moveTo(0, gap);
+    g.lineTo(0, halfSize);
+
+    g.stroke();
+
+    // Center dot
+    g.fill({ color, alpha: 1 });
+    g.circle(0, 0, 2);
+    g.fill();
+  }
+
+  private updateCursorForFrame(timeMs: number): void {
+    if (!this.layoutCache || !this.cursorGraphics) return;
+
+    const position = this.interpolateCursorPosition(timeMs);
+    if (!position) return;
+
+    // Convert video coordinates to stage coordinates
+    // Apply the same transform as the video (scale and offset)
+    const { baseScale, baseOffset } = this.layoutCache;
+    const stageX = position.x * baseScale + baseOffset.x;
+    const stageY = position.y * baseScale + baseOffset.y;
+
+    this.drawCursorAtPosition(stageX, stageY);
+
+    // Check for click events
+    this.checkClickEvents(timeMs, stageX, stageY);
+  }
+
+  private checkClickEvents(timeMs: number, _x: number, _y: number): void {
+    const cursorConfig = this.config.cursorConfig;
+    if (!cursorConfig || cursorConfig.cursorSettings.clickEffect === 'none') return;
+
+    // Look for click events in the time window since last check
+    for (const event of this.normalizedTrackingData) {
+      if ((event.type === 'click' || event.type === 'down')) {
+        if (event.timestamp > this.lastClickTime && event.timestamp <= timeMs) {
+          // Draw click effect at event position
+          const { baseScale, baseOffset } = this.layoutCache;
+          const clickX = event.x * baseScale + baseOffset.x;
+          const clickY = event.y * baseScale + baseOffset.y;
+          this.drawClickEffect(clickX, clickY, timeMs - event.timestamp);
+        }
+      }
+    }
+
+    this.lastClickTime = timeMs;
+  }
+
+  private drawClickEffect(x: number, y: number, elapsedMs: number): void {
+    const cursorConfig = this.config.cursorConfig;
+    if (!cursorConfig || !this.clickEffectsContainer) return;
+
+    const { cursorSettings } = cursorConfig;
+    const progress = Math.min(elapsedMs / this.CLICK_EFFECT_DURATION, 1);
+    if (progress >= 1) return;
+
+    const color = this.hexToNumber(cursorSettings.clickColor);
+    const easeOut = 1 - Math.pow(1 - progress, 3);
+    const fadeOut = 1 - progress;
+
+    const g = new PIXI.Graphics();
+
+    switch (cursorSettings.clickEffect) {
+      case 'ripple': {
+        const maxRadius = 40 * cursorSettings.size;
+        const radius = maxRadius * easeOut;
+        g.stroke({ color, width: 3, alpha: fadeOut * 0.8 });
+        g.circle(x, y, radius);
+        g.stroke();
+
+        const innerRadius = maxRadius * 0.6 * easeOut;
+        g.stroke({ color, width: 2, alpha: fadeOut * 0.5 });
+        g.circle(x, y, innerRadius);
+        g.stroke();
+        break;
+      }
+      case 'pulse': {
+        const maxRadius = 30 * cursorSettings.size;
+        const radius = maxRadius * (0.5 + easeOut * 0.5);
+        g.fill({ color, alpha: fadeOut * 0.4 });
+        g.circle(x, y, radius);
+        g.fill();
+        break;
+      }
+      case 'ring': {
+        const maxRadius = 35 * cursorSettings.size;
+        const radius = maxRadius * easeOut;
+        const thickness = 4 * (1 - progress * 0.5);
+        g.stroke({ color, width: thickness, alpha: fadeOut });
+        g.circle(x, y, radius);
+        g.stroke();
+        break;
+      }
+    }
+
+    this.clickEffectsContainer.addChild(g);
+    // Clean up immediately after render
+    setTimeout(() => {
+      this.clickEffectsContainer?.removeChild(g);
+      g.destroy();
+    }, 0);
+  }
+
+  private hexToNumber(hex: string): number {
+    return parseInt(hex.replace('#', ''), 16);
+  }
+
   destroy(): void {
     if (this.videoSprite) {
       this.videoSprite.destroy();
       this.videoSprite = null;
     }
     this.backgroundSprite = null;
+
+    // Clean up cursor resources
+    if (this.cursorGraphics) {
+      this.cursorGraphics.destroy();
+      this.cursorGraphics = null;
+    }
+    if (this.clickEffectsContainer) {
+      this.clickEffectsContainer.destroy({ children: true });
+      this.clickEffectsContainer = null;
+    }
+    this.normalizedTrackingData = [];
+
     if (this.app) {
       this.app.destroy(true, { children: true, texture: true, textureSource: true });
       this.app = null;

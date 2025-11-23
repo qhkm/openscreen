@@ -1,5 +1,5 @@
 import { ipcMain, desktopCapturer, BrowserWindow, shell, app } from 'electron'
-import { startMouseTracking, stopMouseTracking, getTrackingData, setSourceBounds, getTrackingDataWithMetadata, type SourceBounds } from './mouseTracking'
+import { startMouseTracking, stopMouseTracking, setSourceBounds, getTrackingDataWithMetadata, type SourceBounds } from './mouseTracking'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'

@@ -166,9 +166,28 @@ interface CursorSettings {
 7. **Playback** → CursorRenderer maps coordinates using DPR calculation
 8. **Cursor rendered** → Position updated each frame via PixiJS ticker
 
+## Export with Cursor
+
+The cursor overlay is also rendered in exported videos. The exporter uses the same coordinate mapping logic as the playback renderer.
+
+### Export Data Flow
+1. **VideoEditor** passes `cursorConfig` to `VideoExporter` (if tracking data exists)
+2. **VideoExporter** passes `cursorConfig` to `FrameRenderer`
+3. **FrameRenderer.setupCursor()** initializes cursor graphics and normalizes tracking data
+4. **FrameRenderer.renderFrame()** calls `updateCursorForFrame(timeMs)` before rendering
+5. **Cursor is rendered** on top of video using PixiJS, then composited with background/shadows
+
+### Files Modified for Export
+| File | Changes |
+|------|---------|
+| `src/lib/exporter/types.ts` | Added `CursorConfig` interface |
+| `src/lib/exporter/videoExporter.ts` | Added `cursorConfig` to config, passes to FrameRenderer |
+| `src/lib/exporter/frameRenderer.ts` | Added cursor rendering methods (similar to cursorRenderer.ts) |
+| `src/components/video-editor/VideoEditor.tsx` | Passes cursor data to exporter |
+
 ## Future Improvements
 
-- [ ] Add cursor rendering to video exporter
+- [x] Add cursor rendering to video exporter
 - [ ] Support window-specific bounds (currently uses full screen bounds)
 - [ ] Add smooth cursor interpolation options
 - [ ] Support custom cursor images

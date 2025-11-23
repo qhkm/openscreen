@@ -257,6 +257,11 @@ export default function VideoEditor() {
         showShadow,
         showBlur,
         cropRegion,
+        cursorConfig: mouseTrackingData.length > 0 ? {
+          cursorSettings,
+          mouseTrackingData,
+          sourceBounds,
+        } : undefined,
         onProgress: (progress: ExportProgress) => {
           setExportProgress(progress);
         },
@@ -295,7 +300,7 @@ export default function VideoEditor() {
       setIsExporting(false);
       exporterRef.current = null;
     }
-  }, [videoPath, wallpaper, zoomRegions, showShadow, showBlur, cropRegion, isPlaying]);
+  }, [videoPath, wallpaper, zoomRegions, showShadow, showBlur, cropRegion, isPlaying, cursorSettings, mouseTrackingData, sourceBounds]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {
