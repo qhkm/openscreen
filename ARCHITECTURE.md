@@ -143,6 +143,7 @@ This popup appears when choosing what to record:
 │  electron/windows.ts     - Window factory functions             │
 │  electron/ipc/handlers.ts - IPC handlers for all operations     │
 │  electron/ipc/mouseTracking.ts - Native mouse tracking          │
+│  electron/ipc/windowBounds.ts - Native window bounds via JXA    │
 ├─────────────────────────────────────────────────────────────────┤
 │                    PRELOAD SCRIPT                               │
 │  electron/preload.ts     - Exposes electronAPI to renderer      │
@@ -157,3 +158,69 @@ This popup appears when choosing what to record:
 │  - editor          → VideoEditor (main editing UI)              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## Cursor Overlay System
+
+The cursor overlay tracks mouse position during recording and renders it on video playback.
+
+### Recording Phase
+
+```
+┌──────────────────┐     ┌────────────────────┐     ┌──────────────────┐
+│   uiohook-napi   │ ->  │  mouseTracking.ts  │ ->  │  JSON file       │
+│  (global mouse)  │     │  (IPC handler)     │     │  (saved with     │
+│                  │     │                    │     │   video)         │
+└──────────────────┘     └────────────────────┘     └──────────────────┘
+```
+
+1. **uiohook-napi** captures global mouse events (move, click, down, up)
+2. Events are timestamped relative to recording start
+3. For screen recording: display bounds from Electron
+4. For window recording: window bounds from JXA (JavaScript for Automation)
+5. Data saved as `recording-{timestamp}_tracking.json`
+
+### Playback Phase
+
+```
+┌──────────────────┐     ┌────────────────────┐     ┌──────────────────┐
+│   JSON file      │ ->  │  cursorRenderer.ts │ ->  │  PixiJS Graphics │
+│  (tracking data) │     │  (coordinate map)  │     │  (overlay)       │
+└──────────────────┘     └────────────────────┘     └──────────────────┘
+```
+
+### Coordinate Mapping
+
+The key challenge is mapping mouse coordinates to video space:
+
+| Recording Type | Mouse Coords | Video Dims | Mapping Formula |
+|---------------|--------------|------------|-----------------|
+| **Screen** | Logical pixels | Physical pixels | `(mouse - displayOffset) × DPR × videoScale` |
+| **Window** | Logical pixels | Physical pixels | `(mouse - windowOffset) × DPR × videoScale` |
+
+**Key concepts:**
+- **DPR (Device Pixel Ratio)**: macOS Retina = 2x. Mouse is in logical pixels, video in physical.
+- **Display offset**: For multi-monitor setups, secondary displays have non-zero x/y origin.
+- **Window offset**: JXA returns window position in logical screen coordinates.
+
+### Files Involved
+
+| File | Purpose |
+|------|---------|
+| `electron/ipc/mouseTracking.ts` | Captures mouse events via uiohook-napi |
+| `electron/ipc/windowBounds.ts` | Gets window position via JXA (macOS only) |
+| `src/hooks/useScreenRecorder.ts` | Sets source bounds before recording |
+| `src/components/video-editor/videoPlayback/cursorRenderer.ts` | Maps coords and renders cursor |
+| `src/components/video-editor/types.ts` | CursorSettings, SourceBounds interfaces |
+
+### Window Bounds via JXA
+
+For window recordings, we need the window's screen position. The native macOS API uses JXA:
+
+```javascript
+// Simplified JXA script (runs via osascript)
+var sysEvents = Application("System Events");
+var procs = sysEvents.applicationProcesses.whose({backgroundOnly: false});
+// Search for window by name, return { x, y, width, height }
+```
+
+This returns bounds in **logical pixels** (same coordinate space as mouse events).
