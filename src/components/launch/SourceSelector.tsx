@@ -1,9 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "../ui/button";
 import { MdCheck } from "react-icons/md";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Card } from "../ui/card";
 import styles from "./SourceSelector.module.css";
+import {
+  Monitor,
+  AppWindow,
+  Square,
+  Smartphone,
+  VideoOff,
+  Video,
+  MicOff,
+  Mic,
+  Volume2,
+  VolumeX,
+  Settings,
+  X
+} from "lucide-react";
 
 interface DesktopSource {
   id: string;
@@ -13,12 +26,36 @@ interface DesktopSource {
   appIcon: string | null;
 }
 
+interface MediaDevice {
+  deviceId: string;
+  label: string;
+  kind: string;
+}
+
+type SourceType = 'display' | 'window' | 'area' | 'device';
+
 export function SourceSelector() {
   const [sources, setSources] = useState<DesktopSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
   const [loading, setLoading] = useState(true);
   const [permissionError, setPermissionError] = useState(false);
+  const [sourceType, setSourceType] = useState<SourceType>('display');
 
+  // Media device states
+  const [cameras, setCameras] = useState<MediaDevice[]>([]);
+  const [microphones, setMicrophones] = useState<MediaDevice[]>([]);
+  const [selectedCamera, setSelectedCamera] = useState<string | null>(null);
+  const [selectedMic, setSelectedMic] = useState<string | null>(null);
+  const [systemAudioEnabled, setSystemAudioEnabled] = useState(false);
+
+  // Dropdown states
+  const [cameraDropdownOpen, setCameraDropdownOpen] = useState(false);
+  const [micDropdownOpen, setMicDropdownOpen] = useState(false);
+
+  const cameraRef = useRef<HTMLDivElement>(null);
+  const micRef = useRef<HTMLDivElement>(null);
+
+  // Fetch screen/window sources
   useEffect(() => {
     async function fetchSources() {
       setLoading(true);
@@ -54,12 +91,69 @@ export function SourceSelector() {
     fetchSources();
   }, []);
 
+  // Fetch media devices (cameras and microphones)
+  useEffect(() => {
+    async function fetchMediaDevices() {
+      try {
+        // Request permissions first to get device labels
+        await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(stream => {
+          stream.getTracks().forEach(track => track.stop());
+        }).catch(() => {
+          // Permission denied, continue anyway
+        });
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+
+        const videoDevices = devices
+          .filter(d => d.kind === 'videoinput')
+          .map(d => ({ deviceId: d.deviceId, label: d.label || `Camera ${d.deviceId.slice(0, 4)}`, kind: d.kind }));
+
+        const audioDevices = devices
+          .filter(d => d.kind === 'audioinput')
+          .map(d => ({ deviceId: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 4)}`, kind: d.kind }));
+
+        setCameras(videoDevices);
+        setMicrophones(audioDevices);
+      } catch (error) {
+        console.error('Error fetching media devices:', error);
+      }
+    }
+    fetchMediaDevices();
+  }, []);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (cameraRef.current && !cameraRef.current.contains(event.target as Node)) {
+        setCameraDropdownOpen(false);
+      }
+      if (micRef.current && !micRef.current.contains(event.target as Node)) {
+        setMicDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const screenSources = sources.filter(s => s.id.startsWith('screen:'));
   const windowSources = sources.filter(s => s.id.startsWith('window:'));
 
+  const displayedSources = sourceType === 'display' ? screenSources :
+                           sourceType === 'window' ? windowSources :
+                           [];
+
   const handleSourceSelect = (source: DesktopSource) => setSelectedSource(source);
+
   const handleShare = async () => {
-    if (selectedSource) await window.electronAPI.selectSource(selectedSource);
+    if (selectedSource) {
+      // Pass along media device selections
+      await window.electronAPI.selectSource({
+        ...selectedSource,
+        cameraId: selectedCamera,
+        microphoneId: selectedMic,
+        systemAudio: systemAudioEnabled
+      });
+    }
   };
 
   const handleOpenSettings = async () => {
@@ -70,8 +164,8 @@ export function SourceSelector() {
     return (
       <div className={`h-full flex items-center justify-center ${styles.glassContainer}`} style={{ minHeight: '100vh' }}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-zinc-600 mx-auto mb-2" />
-          <p className="text-xs text-zinc-300">Loading sources...</p>
+          <div className="w-8 h-8 rounded-full border-2 border-zinc-700 border-t-emerald-500 animate-spin mx-auto mb-3" />
+          <p className="text-xs text-zinc-400">Loading sources...</p>
         </div>
       </div>
     );
@@ -114,92 +208,297 @@ export function SourceSelector() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center ${styles.glassContainer}`}>
-      <div className="flex-1 flex flex-col w-full max-w-xl" style={{ padding: 0 }}>
-        <Tabs defaultValue="screens">
-          <TabsList className="grid grid-cols-2 mb-3 bg-zinc-900/40 rounded-full">
-            <TabsTrigger value="screens" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-zinc-200 rounded-full text-xs py-1">Screens</TabsTrigger>
-            <TabsTrigger value="windows" className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-zinc-200 rounded-full text-xs py-1">Windows</TabsTrigger>
-          </TabsList>
-            <div className="h-60 flex flex-col justify-stretch">
-            <TabsContent value="screens" className="h-full">
-              <div className="grid grid-cols-2 gap-2 h-full overflow-y-auto pr-1 relative">
-                {screenSources.map(source => (
-                  <Card
-                    key={source.id}
-                    className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer h-fit p-2 scale-95`}
-                    style={{ margin: 8, width: '90%', maxWidth: 220 }}
-                    onClick={() => handleSourceSelect(source)}
-                  >
-                    <div className="p-1">
-                      <div className="relative mb-1">
-                        <img
-                          src={source.thumbnail || ''}
-                          alt={source.name}
-                          className="w-full aspect-video object-cover rounded border border-zinc-800"
-                        />
-                        {selectedSource?.id === source.id && (
-                          <div className="absolute -top-1 -right-1">
-                            <div className="w-4 h-4 bg-[#34B27B] rounded-full flex items-center justify-center shadow-md">
-                              <MdCheck className={styles.icon} />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className={styles.name + " truncate"}>{source.name}</div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </TabsContent>
-            <TabsContent value="windows" className="h-full">
-              <div className="grid grid-cols-2 gap-2 h-full overflow-y-auto pr-1 relative">
-                {windowSources.map(source => (
-                  <Card
-                    key={source.id}
-                    className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer h-fit p-2 scale-95`}
-                    style={{ margin: 8, width: '90%', maxWidth: 220 }}
-                    onClick={() => handleSourceSelect(source)}
-                  >
-                    <div className="p-1">
-                      <div className="relative mb-1">
-                        <img
-                          src={source.thumbnail || ''}
-                          alt={source.name}
-                          className="w-full aspect-video object-cover rounded border border-gray-700"
-                        />
-                        {selectedSource?.id === source.id && (
-                          <div className="absolute -top-1 -right-1">
-                            <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
-                              <MdCheck className={styles.icon} />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {source.appIcon && (
-                          <img
-                            src={source.appIcon}
-                            alt="App icon"
-                            className={styles.icon + " flex-shrink-0"}
-                          />
-                        )}
-                        <div className={styles.name + " truncate"}>{source.name}</div>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </TabsContent>
+    <div className={`min-h-screen flex flex-col ${styles.glassContainer}`}>
+      {/* Top Toolbar - Draggable */}
+      <div className={`flex items-center justify-center gap-3 px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 ${styles.electronDrag}`}>
+        {/* Left Section - Close + Source Types */}
+        <div className="flex items-center gap-2">
+          {/* Close Button */}
+          <button
+            onClick={() => window.close()}
+            className={`w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-200 transition-colors ${styles.electronNoDrag}`}
+          >
+            <X size={16} />
+          </button>
+
+          {/* Divider */}
+          <div className="w-px h-6 bg-zinc-700 mx-1" />
+
+          {/* Source Type Buttons */}
+          <div className={`flex items-center bg-zinc-800/50 rounded-lg p-1 gap-1 ${styles.electronNoDrag}`}>
+          <SourceTypeButton
+            icon={<Monitor size={16} />}
+            label="Display"
+            active={sourceType === 'display'}
+            onClick={() => setSourceType('display')}
+          />
+          <SourceTypeButton
+            icon={<AppWindow size={16} />}
+            label="Window"
+            active={sourceType === 'window'}
+            onClick={() => setSourceType('window')}
+          />
+          <SourceTypeButton
+            icon={<Square size={16} />}
+            label="Area"
+            active={sourceType === 'area'}
+            onClick={() => setSourceType('area')}
+            disabled
+          />
+          <SourceTypeButton
+            icon={<Smartphone size={16} />}
+            label="Device"
+            active={sourceType === 'device'}
+            onClick={() => setSourceType('device')}
+            disabled
+          />
           </div>
-        </Tabs>
+        </div>
+
+        {/* Divider */}
+        <div className="w-px h-8 bg-zinc-700" />
+
+        {/* Right Section - Media Devices + Settings */}
+        <div className={`flex items-center gap-2 ${styles.electronNoDrag}`}>
+          {/* Media Devices Group */}
+          <div className="flex items-center bg-zinc-800/50 rounded-lg p-1 gap-1">
+            {/* Camera Dropdown */}
+            <div ref={cameraRef} className="relative">
+              <button
+                onClick={() => {
+                  setCameraDropdownOpen(!cameraDropdownOpen);
+                  setMicDropdownOpen(false);
+                }}
+                className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+                  selectedCamera
+                    ? 'bg-zinc-700 text-white'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                }`}
+              >
+                {selectedCamera ? <Video size={16} /> : <VideoOff size={16} />}
+                <span>Camera</span>
+              </button>
+
+              {cameraDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1 w-56 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
+                  <DropdownItem
+                    icon={<VideoOff size={14} />}
+                    label="No camera"
+                    selected={!selectedCamera}
+                    onClick={() => { setSelectedCamera(null); setCameraDropdownOpen(false); }}
+                  />
+                  {cameras.map(cam => (
+                    <DropdownItem
+                      key={cam.deviceId}
+                      icon={<Video size={14} />}
+                      label={cam.label}
+                      selected={selectedCamera === cam.deviceId}
+                      onClick={() => { setSelectedCamera(cam.deviceId); setCameraDropdownOpen(false); }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Microphone Dropdown */}
+            <div ref={micRef} className="relative">
+              <button
+                onClick={() => {
+                  setMicDropdownOpen(!micDropdownOpen);
+                  setCameraDropdownOpen(false);
+                }}
+                className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+                  selectedMic
+                    ? 'bg-zinc-700 text-white'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+                }`}
+              >
+                {selectedMic ? <Mic size={16} /> : <MicOff size={16} />}
+                <span>Mic</span>
+              </button>
+
+              {micDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1 w-56 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
+                  <DropdownItem
+                    icon={<MicOff size={14} />}
+                    label="No microphone"
+                    selected={!selectedMic}
+                    onClick={() => { setSelectedMic(null); setMicDropdownOpen(false); }}
+                  />
+                  {microphones.map(mic => (
+                    <DropdownItem
+                      key={mic.deviceId}
+                      icon={<Mic size={14} />}
+                      label={mic.label}
+                      selected={selectedMic === mic.deviceId}
+                      onClick={() => { setSelectedMic(mic.deviceId); setMicDropdownOpen(false); }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* System Audio Toggle */}
+            <button
+              onClick={() => setSystemAudioEnabled(!systemAudioEnabled)}
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+                systemAudioEnabled
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+              }`}
+              title={systemAudioEnabled ? 'System audio enabled' : 'System audio disabled'}
+            >
+              {systemAudioEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              <span>Audio</span>
+            </button>
+          </div>
+
+          {/* Settings Button */}
+          <button className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-200 transition-colors">
+            <Settings size={16} />
+          </button>
+        </div>
       </div>
-      <div className="border-t border-zinc-800 p-2 w-full max-w-xl">
-        <div className="flex justify-center gap-2">
-          <Button variant="outline" onClick={() => window.close()} className="px-4 py-1 text-xs bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700">Cancel</Button>
-          <Button onClick={handleShare} disabled={!selectedSource} className="px-4 py-1 text-xs bg-[#34B27B] text-white hover:bg-[#34B27B]/80 disabled:opacity-50 disabled:bg-zinc-700">Share</Button>
+
+      {/* Source Grid */}
+      <div className={`flex-1 overflow-y-auto p-4 ${styles.electronNoDrag}`}>
+        {sourceType === 'area' ? (
+          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+            <Square size={48} className="mb-3 opacity-50" />
+            <p className="text-sm">Area selection coming soon</p>
+          </div>
+        ) : sourceType === 'device' ? (
+          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+            <Smartphone size={48} className="mb-3 opacity-50" />
+            <p className="text-sm">Device mirroring coming soon</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {displayedSources.map(source => (
+              <Card
+                key={source.id}
+                className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer overflow-hidden`}
+                onClick={() => handleSourceSelect(source)}
+              >
+                <div className="p-2">
+                  <div className="relative mb-2">
+                    <img
+                      src={source.thumbnail || ''}
+                      alt={source.name}
+                      className="w-full aspect-video object-cover rounded-lg border border-zinc-800"
+                    />
+                    {selectedSource?.id === source.id && (
+                      <div className="absolute -top-1 -right-1">
+                        <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
+                          <MdCheck className="w-3 h-3 text-white" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {source.appIcon && sourceType === 'window' && (
+                      <img
+                        src={source.appIcon}
+                        alt=""
+                        className="w-4 h-4 flex-shrink-0"
+                      />
+                    )}
+                    <span className="text-xs text-zinc-300 truncate">{source.name}</span>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Action Bar */}
+      <div className={`border-t border-zinc-800 px-4 py-3 bg-zinc-900/50 ${styles.electronDrag}`}>
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-zinc-500">
+            {selectedSource ? (
+              <span>Selected: <span className="text-zinc-300">{selectedSource.name}</span></span>
+            ) : (
+              <span>Select a source to record</span>
+            )}
+          </div>
+          <div className={`flex gap-2 ${styles.electronNoDrag}`}>
+            <Button
+              variant="outline"
+              onClick={() => window.close()}
+              className="px-4 py-1.5 text-xs bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleShare}
+              disabled={!selectedSource}
+              className="px-4 py-1.5 text-xs bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:bg-zinc-700"
+            >
+              Start Recording
+            </Button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// Helper Components
+function SourceTypeButton({
+  icon,
+  label,
+  active,
+  onClick,
+  disabled
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+        active
+          ? 'bg-zinc-700 text-white'
+          : disabled
+            ? 'text-zinc-600 cursor-not-allowed'
+            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function DropdownItem({
+  icon,
+  label,
+  selected,
+  onClick
+}: {
+  icon: React.ReactNode;
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors ${
+        selected
+          ? 'bg-emerald-600/20 text-emerald-400'
+          : 'text-zinc-300 hover:bg-zinc-800'
+      }`}
+    >
+      {icon}
+      <span className="truncate flex-1 text-left">{label}</span>
+      {selected && <MdCheck className="w-4 h-4 text-emerald-400" />}
+    </button>
   );
 }
