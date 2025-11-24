@@ -9,6 +9,12 @@ interface ProcessedDesktopSource {
   appIcon: string | null;
 }
 
+interface SelectedSource extends ProcessedDesktopSource {
+  cameraId?: string | null;
+  microphoneId?: string | null;
+  systemAudio?: boolean;
+}
+
 interface Window {
   electronAPI: {
     getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>
@@ -19,6 +25,12 @@ interface Window {
     startMouseTracking: () => Promise<{ success: boolean; startTime?: number }>
     stopMouseTracking: () => Promise<{ success: boolean; data?: any }>
     setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>
+    getDisplayBounds: (displayId: string) => Promise<{
+      success: boolean
+      bounds: { x: number; y: number; width: number; height: number }
+      scaleFactor: number
+      isPrimary?: boolean
+    }>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{
       success: boolean
       path?: string

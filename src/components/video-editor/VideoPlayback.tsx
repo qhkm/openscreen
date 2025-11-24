@@ -32,6 +32,7 @@ interface VideoPlaybackProps {
   cursorSettings?: CursorSettings;
   mouseTrackingData?: MouseTrackingEvent[];
   sourceBounds?: SourceBounds | null;
+  initialMousePosition?: { x: number; y: number } | null;
 }
 
 export interface VideoPlaybackRef {
@@ -61,6 +62,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   cursorSettings,
   mouseTrackingData,
   sourceBounds,
+  initialMousePosition,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -310,6 +312,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
           eventCount: mouseTrackingData.length,
           videoSize: { width: video.videoWidth, height: video.videoHeight },
           sourceBounds,
+          initialMousePosition,
           firstEvent: mouseTrackingData[0],
           lastEvent: mouseTrackingData[mouseTrackingData.length - 1],
         });
@@ -317,11 +320,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
           mouseTrackingData,
           video.videoWidth,
           video.videoHeight,
-          sourceBounds
+          sourceBounds,
+          initialMousePosition
         );
       }
     }
-  }, [mouseTrackingData, videoReady, pixiReady, sourceBounds]);
+  }, [mouseTrackingData, videoReady, pixiReady, sourceBounds, initialMousePosition]);
 
   // Reset click tracking when video is seeked (to avoid duplicate click effects)
   useEffect(() => {
@@ -717,7 +721,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
           baseOffsetRef.current.y
         );
         cursorRendererRef.current.updateForTime(
-          currentTimeRef.current * 1000 // Convert seconds to ms
+          currentTimeRef.current // Already in milliseconds from videoEventHandlers
         );
       }
     };

@@ -52,6 +52,7 @@ export default function VideoEditor() {
   const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
   const [mouseTrackingData, setMouseTrackingData] = useState<MouseTrackingEvent[]>([]);
   const [sourceBounds, setSourceBounds] = useState<SourceBounds | null>(null);
+  const [initialMousePosition, setInitialMousePosition] = useState<{ x: number; y: number } | null>(null);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -72,7 +73,8 @@ export default function VideoEditor() {
         if (trackingResult.success && trackingResult.data) {
           setMouseTrackingData(trackingResult.data);
           setSourceBounds(trackingResult.sourceBounds || null);
-          console.log('Loaded mouse tracking data:', trackingResult.data.length, 'events', 'sourceBounds:', trackingResult.sourceBounds);
+          setInitialMousePosition(trackingResult.initialMousePosition || null);
+          console.log('Loaded mouse tracking data:', trackingResult.data.length, 'events', 'sourceBounds:', trackingResult.sourceBounds, 'initialMousePosition:', trackingResult.initialMousePosition);
         }
       } catch (err) {
         setError('Error loading video: ' + String(err));
@@ -395,6 +397,7 @@ export default function VideoEditor() {
                       cursorSettings={cursorSettings}
                       mouseTrackingData={mouseTrackingData}
                       sourceBounds={sourceBounds}
+                      initialMousePosition={initialMousePosition}
                     />
                   </div>
                 </div>

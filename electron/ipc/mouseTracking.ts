@@ -8,6 +8,9 @@ let isHookStarted = false
 let recordingStartTime: number = 0
 let mouseEventData: MouseEvent[] = []
 let sourceBounds: SourceBounds | null = null
+let lastMoveTimestamp: number = 0
+let initialMousePosition: { x: number; y: number } | null = null
+const MOUSE_MOVE_THROTTLE_MS = 16 // ~60fps, capture at most every 16ms
 
 export interface MouseEvent {
   type: 'move' | 'down' | 'up' | 'click'
@@ -23,6 +26,7 @@ export interface SourceBounds {
   y: number
   width: number
   height: number
+  isWindowRecording?: boolean
 }
 
 export interface MouseTrackingSession {
@@ -38,10 +42,12 @@ export function startMouseTracking() {
   }
 
   isMouseTrackingActive = true
-  
+
   // Reset data for new recording session
   recordingStartTime = performance.now()
   mouseEventData = []
+  lastMoveTimestamp = 0
+  initialMousePosition = null // Will be set on first mouse event
 
   // Only start the hook once
   if (!isHookStarted) {
@@ -84,10 +90,24 @@ export function stopMouseTracking(): { success: boolean; message: string; data?:
 }
 
 function setupMouseEventListeners() {
-  // Track mouse movement
+  // Track mouse movement (throttled to ~60fps)
   uIOhook.on('mousemove', (e) => {
     if (isMouseTrackingActive) {
-      const timestamp = performance.now() - recordingStartTime
+      const now = performance.now()
+      const timestamp = now - recordingStartTime
+
+      // Capture initial mouse position on first event
+      if (initialMousePosition === null) {
+        initialMousePosition = { x: e.x, y: e.y }
+        console.log('Initial mouse position captured:', initialMousePosition)
+      }
+
+      // Throttle mouse move events to reduce data size
+      if (now - lastMoveTimestamp < MOUSE_MOVE_THROTTLE_MS) {
+        return
+      }
+      lastMoveTimestamp = now
+
       const event: MouseEvent = {
         type: 'move',
         timestamp,
@@ -160,10 +180,15 @@ export function getSourceBounds(): SourceBounds | null {
 }
 
 // Get tracking data with metadata for saving to JSON
-export function getTrackingDataWithMetadata(): { events: MouseEvent[]; sourceBounds: SourceBounds | null } {
+export function getTrackingDataWithMetadata(): {
+  events: MouseEvent[];
+  sourceBounds: SourceBounds | null;
+  initialMousePosition: { x: number; y: number } | null;
+} {
   return {
     events: [...mouseEventData],
     sourceBounds: sourceBounds,
+    initialMousePosition: initialMousePosition,
   }
 }
 

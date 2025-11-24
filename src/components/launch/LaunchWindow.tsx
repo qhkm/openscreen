@@ -5,11 +5,15 @@ import { Button } from "../ui/button";
 import { BsRecordCircle } from "react-icons/bs";
 import { FaRegStopCircle } from "react-icons/fa";
 import { MdMonitor } from "react-icons/md";
+import { Video, Mic, Volume2, Loader2 } from "lucide-react";
 
 export function LaunchWindow() {
-  const { recording, toggleRecording } = useScreenRecorder();
+  const { recording, initializing, toggleRecording } = useScreenRecorder();
   const [selectedSource, setSelectedSource] = useState("Screen");
   const [hasSelectedSource, setHasSelectedSource] = useState(false);
+  const [hasCamera, setHasCamera] = useState(false);
+  const [hasMic, setHasMic] = useState(false);
+  const [hasSystemAudio, setHasSystemAudio] = useState(false);
 
   useEffect(() => {
     const checkSelectedSource = async () => {
@@ -18,15 +22,21 @@ export function LaunchWindow() {
         if (source) {
           setSelectedSource(source.name);
           setHasSelectedSource(true);
+          setHasCamera(!!source.cameraId);
+          setHasMic(!!source.microphoneId);
+          setHasSystemAudio(!!source.systemAudio);
         } else {
           setSelectedSource("Screen");
           setHasSelectedSource(false);
+          setHasCamera(false);
+          setHasMic(false);
+          setHasSystemAudio(false);
         }
       }
     };
 
     checkSelectedSource();
-    
+
     const interval = setInterval(checkSelectedSource, 500);
     return () => clearInterval(interval);
   }, []);
@@ -66,16 +76,30 @@ export function LaunchWindow() {
           {truncateText(selectedSource)}
         </Button>
 
+        {/* Media indicators */}
+        {(hasCamera || hasMic || hasSystemAudio) && (
+          <div className="flex items-center gap-1.5 px-2">
+            {hasCamera && <Video size={12} className="text-emerald-400" />}
+            {hasMic && <Mic size={12} className="text-emerald-400" />}
+            {hasSystemAudio && <Volume2 size={12} className="text-emerald-400" />}
+          </div>
+        )}
+
         <div className="w-px h-5 bg-white/30" />
 
         <Button
           variant="link"
           size="sm"
           onClick={hasSelectedSource ? toggleRecording : openSourceSelector}
-          disabled={!hasSelectedSource && !recording}
+          disabled={initializing || (!hasSelectedSource && !recording)}
           className={`gap-1 bg-transparent hover:bg-transparent px-0 flex-1 text-right text-xs ${styles.electronNoDrag}`}
         >
-          {recording ? (
+          {initializing ? (
+            <>
+              <Loader2 size={13} className="text-white animate-spin" />
+              <span className="text-white">Starting...</span>
+            </>
+          ) : recording ? (
             <>
               <FaRegStopCircle size={13} className="text-red-400" />
               <span className="text-red-400">Stop</span>

@@ -1,5 +1,6 @@
-import { ipcMain, desktopCapturer, BrowserWindow, shell, app } from 'electron'
+import { ipcMain, desktopCapturer, BrowserWindow, shell, app, screen } from 'electron'
 import { startMouseTracking, stopMouseTracking, setSourceBounds, getTrackingDataWithMetadata, type SourceBounds } from './mouseTracking'
+import { getWindowBoundsByName } from './windowBounds'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { RECORDINGS_DIR } from '../main'
@@ -74,6 +75,56 @@ export function registerIpcHandlers(
   ipcMain.handle('set-source-bounds', (_, bounds: SourceBounds) => {
     setSourceBounds(bounds)
     return { success: true }
+  })
+
+  // Get window bounds by window name using native macOS API
+  ipcMain.handle('get-window-bounds', async (_, windowName: string) => {
+    try {
+      console.log('get-window-bounds called for:', windowName)
+
+      const bounds = await getWindowBoundsByName(windowName)
+
+      if (bounds) {
+        return {
+          success: true,
+          bounds,
+        }
+      }
+
+      return {
+        success: false,
+        message: 'Window bounds not found',
+      }
+    } catch (error) {
+      console.error('Failed to get window bounds:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('get-display-bounds', (_, displayId: string) => {
+    // Get all displays and find the one matching the display_id
+    const displays = screen.getAllDisplays()
+
+    // display_id from desktopCapturer is a string, display.id from screen API is a number
+    const display = displays.find(d => String(d.id) === displayId)
+
+    if (display) {
+      // Return the display bounds (position and size in logical pixels)
+      return {
+        success: true,
+        bounds: display.bounds, // { x, y, width, height }
+        scaleFactor: display.scaleFactor
+      }
+    }
+
+    // Fallback to primary display if not found
+    const primary = screen.getPrimaryDisplay()
+    return {
+      success: true,
+      bounds: primary.bounds,
+      scaleFactor: primary.scaleFactor,
+      isPrimary: true
+    }
   })
 
   ipcMain.handle('store-recorded-video', async (_, videoData: ArrayBuffer, fileName: string) => {
@@ -160,10 +211,15 @@ export function registerIpcHandlers(
       // Handle both old format (array) and new format (object with events and sourceBounds)
       if (Array.isArray(parsed)) {
         // Old format: just an array of events
-        return { success: true, data: parsed, sourceBounds: null }
+        return { success: true, data: parsed, sourceBounds: null, initialMousePosition: null }
       } else {
-        // New format: object with events and sourceBounds
-        return { success: true, data: parsed.events || [], sourceBounds: parsed.sourceBounds || null }
+        // New format: object with events, sourceBounds, and initialMousePosition
+        return {
+          success: true,
+          data: parsed.events || [],
+          sourceBounds: parsed.sourceBounds || null,
+          initialMousePosition: parsed.initialMousePosition || null
+        }
       }
     } catch (error) {
       console.error('Failed to get tracking data:', error)

@@ -11,6 +11,9 @@ interface ClickEffectInstance {
   graphics: PIXI.Graphics;
 }
 
+// Time offset for cursor sync (disabled for now - JXA approach unreliable)
+// const WINDOW_RECORDING_TIME_OFFSET = -100; // ms
+
 export class CursorRenderer {
   private container: PIXI.Container;
   private cursorGraphics: PIXI.Graphics;
@@ -19,6 +22,7 @@ export class CursorRenderer {
   private settings: CursorSettings;
   private trackingData: MouseTrackingEvent[] = [];
   private videoLayout = { scale: 1, offsetX: 0, offsetY: 0 };
+  private isWindowRecording = false;
 
   constructor(parentContainer: PIXI.Container, settings: CursorSettings) {
     this.settings = settings;
@@ -44,7 +48,7 @@ export class CursorRenderer {
     this.drawCursor();
   }
 
-  setTrackingData(data: MouseTrackingEvent[], videoWidth: number, videoHeight: number, sourceBounds?: SourceBounds | null) {
+  setTrackingData(data: MouseTrackingEvent[], videoWidth: number, videoHeight: number, sourceBounds?: SourceBounds | null, initialMousePosition?: { x: number; y: number } | null) {
     // Normalize timestamps and map coordinates from screen space to video space
     // sourceBounds: the recorded video dimensions (in physical pixels)
     // Mouse coordinates from uiohook are in logical/screen coordinates (CSS points on macOS)
@@ -55,49 +59,90 @@ export class CursorRenderer {
 
       // If we have source bounds (video stream dimensions), calculate the proper scale
       if (sourceBounds && sourceBounds.width > 0 && sourceBounds.height > 0) {
-        // sourceBounds = video stream dimensions (may be physical pixels on Retina)
-        // videoWidth/videoHeight = actual encoded video dimensions
-        // Mouse coordinates are in logical screen pixels
-        //
-        // The key insight: sourceBounds may be 2x the actual video dimensions on Retina
-        // because the stream reports physical pixels but video encodes at logical resolution
-        //
-        // Scale factor = videoWidth / (sourceBounds.width / dpr) = videoWidth * dpr / sourceBounds.width
-        // But if video is at logical resolution, this simplifies to just: videoWidth / logicalWidth
-        //
-        // Since mouse coords are logical and video is also at logical resolution (1470x956),
-        // we need: scaleX = videoWidth / (sourceBounds.width / dpr)
-
         const dpr = window.devicePixelRatio || 2;
-        // Convert source bounds from physical to logical pixels
-        const logicalSourceWidth = sourceBounds.width / dpr;
-        const logicalSourceHeight = sourceBounds.height / dpr;
+        const offsetX = sourceBounds.x;
+        const offsetY = sourceBounds.y;
 
-        // Scale from logical mouse coords to video coords
-        const scaleX = videoWidth / logicalSourceWidth;
-        const scaleY = videoHeight / logicalSourceHeight;
+        // Store if this is a window recording for time offset compensation
+        this.isWindowRecording = sourceBounds.isWindowRecording || false;
 
-        console.log('Tracking data with source bounds:', {
-          sourceBounds,
-          videoSize: { width: videoWidth, height: videoHeight },
-          dpr,
-          logicalSource: { width: logicalSourceWidth, height: logicalSourceHeight },
-          scaleFactors: { x: scaleX, y: scaleY },
-        });
+        if (this.isWindowRecording) {
+          // Window recording: JXA returns bounds in LOGICAL pixels
+          // sourceBounds.x/y = window origin (logical pixels)
+          // sourceBounds.width/height = window size (logical pixels)
+          // Mouse coordinates from uiohook = logical screen pixels
+          // Video dimensions = physical pixels (logical * DPR)
 
-        this.trackingData = data.map(event => ({
-          ...event,
-          timestamp: (event.timestamp - firstTimestamp) * 1000,
-          // Map logical screen coordinates to video coordinates
-          x: (event.x - sourceBounds.x / dpr) * scaleX,
-          y: (event.y - sourceBounds.y / dpr) * scaleY,
-        }));
+          // For window: position in video = (mouseLogical - windowLogical) * DPR
+          // Then scale to video output size
+          const windowPhysicalWidth = sourceBounds.width * dpr;
+          const windowPhysicalHeight = sourceBounds.height * dpr;
+          const videoScaleX = videoWidth / windowPhysicalWidth;
+          const videoScaleY = videoHeight / windowPhysicalHeight;
+
+          console.log('Window recording with native bounds:', {
+            sourceBounds,
+            videoSize: { width: videoWidth, height: videoHeight },
+            windowPhysical: { width: windowPhysicalWidth, height: windowPhysicalHeight },
+            offset: { x: offsetX, y: offsetY },
+            dpr,
+            videoScale: { x: videoScaleX, y: videoScaleY },
+          });
+
+          this.trackingData = data.map(event => ({
+            ...event,
+            timestamp: event.timestamp - firstTimestamp,
+            // Map mouse coordinates to video coordinates:
+            // 1. Subtract window origin (both in logical pixels)
+            // 2. Multiply by DPR to convert logical → physical
+            // 3. Scale to video dimensions
+            x: (event.x - offsetX) * dpr * videoScaleX,
+            y: (event.y - offsetY) * dpr * videoScaleY,
+          }));
+        } else {
+          // Screen recording: use display offset for proper mapping
+          // sourceBounds.width/height = video stream dimensions (physical pixels, e.g. 2940x1912)
+          // sourceBounds.x/y = display origin (logical pixels, 0,0 for primary display)
+          // Mouse coordinates from uiohook = logical screen pixels (e.g. 1470x956)
+
+          // Mouse coordinates from uiohook are in logical screen pixels
+          // Video/sourceBounds dimensions are in physical pixels
+          // To convert: (mouseLogical - offset) * dpr = physical position in video
+          const videoScaleX = videoWidth / sourceBounds.width;
+          const videoScaleY = videoHeight / sourceBounds.height;
+
+          console.log('Screen recording with native bounds:', {
+            sourceBounds,
+            videoSize: { width: videoWidth, height: videoHeight },
+            offset: { x: offsetX, y: offsetY },
+            dpr,
+            videoScale: { x: videoScaleX, y: videoScaleY },
+          });
+
+          this.trackingData = data.map(event => ({
+            ...event,
+            timestamp: event.timestamp - firstTimestamp,
+            // Map mouse coordinates to video coordinates:
+            // 1. Subtract display offset (both in logical pixels)
+            // 2. Multiply by DPR to convert logical → physical
+            // 3. Scale to video dimensions (usually 1:1)
+            x: (event.x - offsetX) * dpr * videoScaleX,
+            y: (event.y - offsetY) * dpr * videoScaleY,
+          }));
+        }
       } else {
-        // No source bounds - use heuristic based on mouse movement range
-        // Find the bounding box of all mouse positions
+        // Window recording: no source bounds from native API
+        // Fall back to heuristic approach using mouse movement bounding box
+        this.isWindowRecording = true;
+
+        // For window recording, mouse coordinates are in logical pixels (CSS points)
+        // Video dimensions are in physical pixels
+        // We need to apply DPR to convert logical → physical
+        const dpr = window.devicePixelRatio || 2;
+
+        // Find the bounding box of mouse movement
         let minX = Infinity, minY = Infinity;
         let maxX = -Infinity, maxY = -Infinity;
-
         for (const event of data) {
           if (event.x < minX) minX = event.x;
           if (event.y < minY) minY = event.y;
@@ -105,25 +150,26 @@ export class CursorRenderer {
           if (event.y > maxY) maxY = event.y;
         }
 
-        const mouseRangeX = maxX - minX;
-        const mouseRangeY = maxY - minY;
+        // Estimate window position: assume minX/minY is near the window origin
+        // This works best when user moves cursor to corners during recording
+        const estimatedWindowX = minX;
+        const estimatedWindowY = minY;
 
-        // Calculate scale factors to map mouse range to video dimensions
-        const scaleX = videoWidth / Math.max(mouseRangeX, 1);
-        const scaleY = videoHeight / Math.max(mouseRangeY, 1);
-
-        console.log('Tracking data without source bounds (heuristic):', {
-          mouseRange: { minX, maxX, minY, maxY, rangeX: mouseRangeX, rangeY: mouseRangeY },
+        console.log('Window recording - using heuristic (no native bounds):', {
           videoSize: { width: videoWidth, height: videoHeight },
-          scaleFactors: { x: scaleX, y: scaleY },
+          mouseRange: { minX, maxX, minY, maxY },
+          estimatedWindow: { x: estimatedWindowX, y: estimatedWindowY },
+          dpr,
         });
 
         this.trackingData = data.map(event => ({
           ...event,
-          timestamp: (event.timestamp - firstTimestamp) * 1000,
-          // Map using bounding box as estimated source bounds
-          x: (event.x - minX) * scaleX,
-          y: (event.y - minY) * scaleY,
+          timestamp: event.timestamp - firstTimestamp,
+          // Map mouse coordinates to video coordinates:
+          // 1. Subtract estimated window origin (both in logical pixels)
+          // 2. Multiply by DPR to convert logical → physical
+          x: (event.x - estimatedWindowX) * dpr,
+          y: (event.y - estimatedWindowY) * dpr,
         }));
       }
 
@@ -274,8 +320,13 @@ export class CursorRenderer {
   updateForTime(currentTimeMs: number) {
     if (this.trackingData.length === 0) return;
 
+    // Apply time offset to compensate for recording latency
+    // User-defined offset only - no automatic adjustment
+    const userOffset = this.settings.timeOffset || 0;
+    const adjustedTimeMs = currentTimeMs + userOffset;
+
     // Find the mouse position at current time using interpolation
-    const position = this.interpolatePosition(currentTimeMs);
+    const position = this.interpolatePosition(adjustedTimeMs);
 
     if (position) {
       // Convert screen coordinates to video sprite coordinates
@@ -297,8 +348,8 @@ export class CursorRenderer {
 
       this.updatePosition(videoX, videoY);
 
-      // Check for click events near current time
-      this.checkForClicks(currentTimeMs, scale, offsetX, offsetY);
+      // Check for click events near current time (using adjusted time)
+      this.checkForClicks(adjustedTimeMs, scale, offsetX, offsetY);
     }
 
     // Update click effects animations

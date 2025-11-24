@@ -31,7 +31,19 @@ interface Window {
     getSelectedSource: () => Promise<any>
     startMouseTracking: () => Promise<void>
     stopMouseTracking: () => Promise<void>
-    setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>
+    setSourceBounds: (bounds: { x: number; y: number; width: number; height: number; isWindowRecording?: boolean }) => Promise<{ success: boolean }>
+    getDisplayBounds: (displayId: string) => Promise<{
+      success: boolean
+      bounds: { x: number; y: number; width: number; height: number }
+      scaleFactor: number
+      isPrimary?: boolean
+    }>
+    getWindowBounds: (windowName: string) => Promise<{
+      success: boolean
+      bounds?: { x: number; y: number; width: number; height: number }
+      message?: string
+      error?: string
+    }>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
     storeMouseTrackingData: (fileName: string) => Promise<{ success: boolean; path?: string; eventCount?: number; message?: string }>
     getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
@@ -45,7 +57,8 @@ interface Window {
         button?: number
         clicks?: number
       }>
-      sourceBounds: { x: number; y: number; width: number; height: number } | null
+      sourceBounds: { x: number; y: number; width: number; height: number; isWindowRecording?: boolean } | null
+      initialMousePosition: { x: number; y: number } | null
       message?: string
       error?: string
     }>

@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSourceBounds: (bounds: { x: number; y: number; width: number; height: number }) => {
     return ipcRenderer.invoke('set-source-bounds', bounds)
   },
+  getDisplayBounds: (displayId: string) => {
+    return ipcRenderer.invoke('get-display-bounds', displayId)
+  },
+  getWindowBounds: (windowName: string) => {
+    return ipcRenderer.invoke('get-window-bounds', windowName)
+  },
   storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('store-recorded-video', videoData, fileName)
   },

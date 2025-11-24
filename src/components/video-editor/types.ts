@@ -63,6 +63,7 @@ export interface CursorSettings {
   color: string; // Hex color for cursor
   clickEffect: ClickEffect;
   clickColor: string; // Hex color for click effect
+  timeOffset: number; // Time offset in ms to sync cursor with video (negative = cursor ahead, positive = cursor behind)
 }
 
 export const DEFAULT_CURSOR_SETTINGS: CursorSettings = {
@@ -71,6 +72,7 @@ export const DEFAULT_CURSOR_SETTINGS: CursorSettings = {
   color: '#FFFFFF',
   clickEffect: 'ripple',
   clickColor: '#34B27B',
+  timeOffset: 0, // Time offset in ms (negative = cursor was ahead, positive = cursor was behind)
 };
 
 export const CURSOR_STYLE_OPTIONS: Array<{ value: CursorStyle; label: string }> = [
@@ -104,6 +106,7 @@ export interface SourceBounds {
   y: number;
   width: number;
   height: number;
+  isWindowRecording?: boolean; // True if recording a specific window (vs full screen)
 }
 
 // =====================================

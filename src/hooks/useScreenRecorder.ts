@@ -3,13 +3,17 @@ import { fixWebmDuration } from "@fix-webm-duration/fix";
 
 type UseScreenRecorderReturn = {
   recording: boolean;
+  initializing: boolean;
   toggleRecording: () => void;
 };
 
 export function useScreenRecorder(): UseScreenRecorderReturn {
   const [recording, setRecording] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
+  const micStream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
 
@@ -17,6 +21,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     if (mediaRecorder.current?.state === "recording") {
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
+      }
+      if (cameraStream.current) {
+        cameraStream.current.getTracks().forEach(track => track.stop());
+        cameraStream.current = null;
+      }
+      if (micStream.current) {
+        micStream.current.getTracks().forEach(track => track.stop());
+        micStream.current = null;
       }
       mediaRecorder.current.stop();
       setRecording(false);
@@ -27,7 +39,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
-    
+
     if (window.electronAPI?.onStopRecordingFromTray) {
       cleanup = window.electronAPI.onStopRecordingFromTray(() => {
         stopRecording.current();
@@ -36,7 +48,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
     return () => {
       if (cleanup) cleanup();
-      
+
       if (mediaRecorder.current?.state === "recording") {
         mediaRecorder.current.stop();
       }
@@ -44,19 +56,33 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         stream.current.getTracks().forEach(track => track.stop());
         stream.current = null;
       }
+      if (cameraStream.current) {
+        cameraStream.current.getTracks().forEach(track => track.stop());
+        cameraStream.current = null;
+      }
+      if (micStream.current) {
+        micStream.current.getTracks().forEach(track => track.stop());
+        micStream.current = null;
+      }
     };
   }, []);
 
   const startRecording = async () => {
+    setInitializing(true);
     try {
       const selectedSource = await window.electronAPI.getSelectedSource();
       if (!selectedSource) {
         alert("Please select a source to record");
+        setInitializing(false);
         return;
       }
-      await window.electronAPI.startMouseTracking();
-      const mediaStream = await (navigator.mediaDevices as any).getUserMedia({
-        audio: false,
+      // Get screen capture stream
+      const screenStream = await (navigator.mediaDevices as any).getUserMedia({
+        audio: selectedSource.systemAudio ? {
+          mandatory: {
+            chromeMediaSource: "desktop",
+          },
+        } : false,
         video: {
           mandatory: {
             chromeMediaSource: "desktop",
@@ -64,22 +90,123 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
           },
         },
       });
-      stream.current = mediaStream;
+
+      // Create combined stream starting with screen video
+      const combinedTracks: MediaStreamTrack[] = [...screenStream.getVideoTracks()];
+
+      // Add system audio if enabled and available
+      if (selectedSource.systemAudio) {
+        const systemAudioTracks = screenStream.getAudioTracks();
+        if (systemAudioTracks.length > 0) {
+          combinedTracks.push(...systemAudioTracks);
+          console.log('Added system audio track');
+        }
+      }
+
+      // Get microphone stream if selected
+      if (selectedSource.microphoneId) {
+        try {
+          const micStreamResult = await navigator.mediaDevices.getUserMedia({
+            audio: { deviceId: { exact: selectedSource.microphoneId } },
+            video: false,
+          });
+          micStream.current = micStreamResult;
+          combinedTracks.push(...micStreamResult.getAudioTracks());
+          console.log('Added microphone track:', selectedSource.microphoneId);
+        } catch (err) {
+          console.warn('Failed to get microphone:', err);
+        }
+      }
+
+      // Get camera stream if selected (stored separately for potential picture-in-picture)
+      if (selectedSource.cameraId) {
+        try {
+          const cameraStreamResult = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { deviceId: { exact: selectedSource.cameraId } },
+          });
+          cameraStream.current = cameraStreamResult;
+          // Note: Camera track is stored but not combined into main recording
+          // This allows for future picture-in-picture implementation
+          console.log('Camera stream ready:', selectedSource.cameraId);
+        } catch (err) {
+          console.warn('Failed to get camera:', err);
+        }
+      }
+
+      // Create final combined stream
+      stream.current = new MediaStream(combinedTracks);
+
       if (!stream.current) {
         throw new Error("Media stream is not available.");
       }
+
       const videoTrack = stream.current.getVideoTracks()[0];
       const { width = 1920, height = 1080 } = videoTrack.getSettings();
 
-      // Set source bounds using actual video stream dimensions
-      // This is crucial for accurate cursor coordinate mapping
-      await window.electronAPI.setSourceBounds({
-        x: 0,
-        y: 0,
-        width: width,
-        height: height,
-      });
-      console.log('Set source bounds from video stream:', { width, height });
+      // Set source bounds for cursor coordinate mapping
+      // For screen recordings: include display origin for accurate mapping
+      // For window recordings: get actual window bounds via native API
+      const isScreenRecording = selectedSource.id.startsWith('screen:');
+
+      if (isScreenRecording) {
+        // Screen recording: get display bounds for accurate cursor mapping
+        let displayX = 0;
+        let displayY = 0;
+
+        if (selectedSource.display_id) {
+          try {
+            const displayInfo = await window.electronAPI.getDisplayBounds(selectedSource.display_id);
+            if (displayInfo.success) {
+              displayX = displayInfo.bounds.x;
+              displayY = displayInfo.bounds.y;
+              console.log('Got display bounds:', displayInfo.bounds);
+            }
+          } catch (err) {
+            console.warn('Failed to get display bounds:', err);
+          }
+        }
+
+        await window.electronAPI.setSourceBounds({
+          x: displayX,
+          y: displayY,
+          width: width,
+          height: height,
+        });
+        console.log('Set source bounds for screen:', { x: displayX, y: displayY, width, height });
+      } else {
+        // Window recording: try to get actual window bounds via native API
+        let windowBoundsResult = null;
+        try {
+          windowBoundsResult = await window.electronAPI.getWindowBounds(selectedSource.name);
+          console.log('Got window bounds result:', windowBoundsResult);
+        } catch (err) {
+          console.warn('Failed to get window bounds:', err);
+        }
+
+        if (windowBoundsResult?.success && windowBoundsResult.bounds) {
+          // Native bounds available - use them for accurate cursor mapping
+          const bounds = windowBoundsResult.bounds;
+          await window.electronAPI.setSourceBounds({
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+            isWindowRecording: true,
+          });
+          console.log('Set source bounds for window:', bounds);
+        } else {
+          // Fallback to heuristic mode
+          await window.electronAPI.setSourceBounds({
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            isWindowRecording: true,
+          });
+          console.log('Window recording: using heuristic mode (native bounds unavailable)');
+        }
+      }
 
       const totalPixels = width * height;
       let bitrate = 150_000_000;
@@ -121,12 +248,16 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         }
       };
       recorder.onerror = () => setRecording(false);
+      // Start mouse tracking right before video recording to sync timestamps
+      await window.electronAPI.startMouseTracking();
       recorder.start(1000);
       startTime.current = Date.now();
+      setInitializing(false);
       setRecording(true);
       window.electronAPI?.setRecordingState(true);
     } catch (error) {
       console.error('Failed to start recording:', error);
+      setInitializing(false);
       setRecording(false);
       if (stream.current) {
         stream.current.getTracks().forEach(track => track.stop());
@@ -136,8 +267,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
   };
 
   const toggleRecording = () => {
+    if (initializing) return; // Prevent double-click while initializing
     recording ? stopRecording.current() : startRecording();
   };
 
-  return { recording, toggleRecording };
+  return { recording, initializing, toggleRecording };
 }
