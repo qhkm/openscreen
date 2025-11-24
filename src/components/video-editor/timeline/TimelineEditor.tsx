@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTimelineContext } from "dnd-timeline";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Scissors } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import TimelineWrapper from "./TimelineWrapper";
 import Row from "./Row";
 import Item from "./Item";
 import type { Range, Span } from "dnd-timeline";
-import type { ZoomRegion } from "../types";
+import type { ZoomRegion, ClipRegion } from "../types";
 
-const ROW_ID = "row-1";
+const CLIP_ROW_ID = "row-clips";
+const ZOOM_ROW_ID = "row-zoom";
 const FALLBACK_RANGE_MS = 1000;
 const TARGET_MARKER_COUNT = 12;
 
@@ -18,12 +19,21 @@ interface TimelineEditorProps {
   videoDuration: number;
   currentTime: number;
   onSeek?: (time: number) => void;
+  // Zoom regions
   zoomRegions: ZoomRegion[];
   onZoomAdded: (span: Span) => void;
   onZoomSpanChange: (id: string, span: Span) => void;
   onZoomDelete: (id: string) => void;
   selectedZoomId: string | null;
   onSelectZoom: (id: string | null) => void;
+  // Clip regions
+  clipRegions: ClipRegion[];
+  onClipAdded: (span: Span) => void;
+  onClipSpanChange: (id: string, span: Span) => void;
+  onClipDelete: (id: string) => void;
+  selectedClipId: string | null;
+  onSelectClip: (id: string | null) => void;
+  onCutClip: () => void;
 }
 
 interface TimelineScaleConfig {
@@ -34,12 +44,16 @@ interface TimelineScaleConfig {
   minVisibleRangeMs: number;
 }
 
+type TimelineItemType = 'zoom' | 'clip';
+
 interface TimelineRenderItem {
   id: string;
   rowId: string;
   span: Span;
   label: string;
-  zoomDepth: number;
+  itemType: TimelineItemType;
+  zoomDepth?: number;
+  clipIndex?: number;
 }
 
 const SCALE_CANDIDATES = [
@@ -291,21 +305,27 @@ function TimelineAxis({
 }
 
 function Timeline({
-  items,
+  clipItems,
+  zoomItems,
   videoDurationMs,
   intervalMs,
   currentTimeMs,
   onSeek,
   onSelectZoom,
+  onSelectClip,
   selectedZoomId,
+  selectedClipId,
 }: {
-  items: TimelineRenderItem[];
+  clipItems: TimelineRenderItem[];
+  zoomItems: TimelineRenderItem[];
   videoDurationMs: number;
   intervalMs: number;
   currentTimeMs: number;
   onSeek?: (time: number) => void;
   onSelectZoom?: (id: string | null) => void;
+  onSelectClip?: (id: string | null) => void;
   selectedZoomId: string | null;
+  selectedClipId: string | null;
 }) {
   const { setTimelineRef, style, sidebarWidth, range, pixelsToValue } = useTimelineContext();
 
@@ -315,7 +335,7 @@ function Timeline({
     // Only handle left click (button 0)
     if (e.button !== 0) return;
 
-    // Check if the click is on an item (zoom region) - if so, let dnd-timeline handle it
+    // Check if the click is on an item (zoom/clip region) - if so, let dnd-timeline handle it
     const target = e.target as HTMLElement;
     if (target.closest('[data-timeline-item]')) return;
 
@@ -328,33 +348,61 @@ function Timeline({
     const absoluteMs = Math.max(0, Math.min(range.start + relativeMs, videoDurationMs));
     const timeInSeconds = absoluteMs / 1000;
 
-    // Deselect zoom first, then seek (batch state updates)
+    // Deselect both clip and zoom first, then seek
+    onSelectClip?.(null);
     onSelectZoom?.(null);
     onSeek(timeInSeconds);
 
     // Prevent default to stop any other handlers
     e.stopPropagation();
-  }, [onSeek, onSelectZoom, videoDurationMs, sidebarWidth, range.start, pixelsToValue]);
+  }, [onSeek, onSelectZoom, onSelectClip, videoDurationMs, sidebarWidth, range.start, pixelsToValue]);
 
   return (
     <div
       ref={setTimelineRef}
       style={style}
-      className="select-none bg-[#09090b] min-h-[140px] relative cursor-pointer group"
+      className="select-none bg-[#09090b] flex-1 relative cursor-pointer group"
       onPointerDown={handleTimelinePointerDown}
     >
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px)] bg-[length:20px_100%] pointer-events-none" />
       <TimelineAxis intervalMs={intervalMs} videoDurationMs={videoDurationMs} currentTimeMs={currentTimeMs} />
       <PlaybackCursor currentTimeMs={currentTimeMs} videoDurationMs={videoDurationMs} />
-      <Row id={ROW_ID}>
-        {items.map((item) => (
+
+      {/* Clip Row (above zoom row) */}
+      <Row id={CLIP_ROW_ID}>
+        {clipItems.map((item) => (
+          <Item
+            id={item.id}
+            key={item.id}
+            rowId={item.rowId}
+            span={item.span}
+            isSelected={item.id === selectedClipId}
+            onSelect={() => {
+              onSelectClip?.(item.id);
+              onSelectZoom?.(null);
+            }}
+            itemType="clip"
+            clipIndex={item.clipIndex}
+          >
+            {item.label}
+          </Item>
+        ))}
+      </Row>
+
+      {/* Zoom Row (below clip row) */}
+      <Row id={ZOOM_ROW_ID}>
+        {zoomItems.map((item) => (
           <Item
             id={item.id}
             key={item.id}
             rowId={item.rowId}
             span={item.span}
             isSelected={item.id === selectedZoomId}
-            onSelect={() => onSelectZoom?.(item.id)}
+            onSelect={() => {
+              onSelectZoom?.(item.id);
+              onSelectClip?.(null);
+            }}
+            itemType="zoom"
             zoomDepth={item.zoomDepth}
           >
             {item.label}
@@ -374,6 +422,12 @@ export default function TimelineEditor({
   onZoomSpanChange,
   selectedZoomId,
   onSelectZoom,
+  clipRegions,
+  onClipAdded,
+  onClipSpanChange,
+  selectedClipId,
+  onSelectClip,
+  onCutClip,
 }: TimelineEditorProps) {
   const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
   const currentTimeMs = useMemo(() => Math.round(currentTime * 1000), [currentTime]);
@@ -407,7 +461,7 @@ export default function TimelineEditor({
     });
   }, [zoomRegions, totalMs, safeMinDurationMs, onZoomSpanChange]);
 
-  const hasOverlap = useCallback((newSpan: Span, excludeId?: string): boolean => {
+  const hasZoomOverlap = useCallback((newSpan: Span, excludeId?: string): boolean => {
     // Snap if gap is 2ms or less
     return zoomRegions.some((region) => {
       if (region.id === excludeId) return false;
@@ -418,6 +472,28 @@ export default function TimelineEditor({
       return !(newSpan.end <= region.startMs || newSpan.start >= region.endMs);
     });
   }, [zoomRegions]);
+
+  const hasClipOverlap = useCallback((newSpan: Span, excludeId?: string): boolean => {
+    // Snap if gap is 2ms or less
+    return clipRegions.some((region) => {
+      if (region.id === excludeId) return false;
+      const gapBefore = newSpan.start - region.endMs;
+      const gapAfter = region.startMs - newSpan.end;
+      if (gapBefore > 0 && gapBefore <= 2) return true;
+      if (gapAfter > 0 && gapAfter <= 2) return true;
+      return !(newSpan.end <= region.startMs || newSpan.start >= region.endMs);
+    });
+  }, [clipRegions]);
+
+  // Combined overlap check for both zoom and clip items
+  const hasOverlap = useCallback((newSpan: Span, excludeId?: string): boolean => {
+    // Determine if this is a clip or zoom item by ID prefix
+    const isClipItem = excludeId?.startsWith('clip-');
+    if (isClipItem) {
+      return hasClipOverlap(newSpan, excludeId);
+    }
+    return hasZoomOverlap(newSpan, excludeId);
+  }, [hasZoomOverlap, hasClipOverlap]);
 
   const handleAddZoom = useCallback(() => {
     if (!videoDuration || videoDuration === 0 || totalMs === 0) {
@@ -511,6 +587,98 @@ export default function TimelineEditor({
     onZoomAdded({ start: gap.start, end: gap.start + duration });
   }, [videoDuration, totalMs, safeMinDurationMs, zoomRegions, onZoomAdded, currentTimeMs]);
 
+  const handleAddClip = useCallback(() => {
+    if (!videoDuration || videoDuration === 0 || totalMs === 0) {
+      return;
+    }
+
+    const preferredDuration = Math.min(3000, totalMs);
+    const minDuration = Math.max(500, safeMinDurationMs); // Minimum 500ms clip
+
+    if (minDuration <= 0) {
+      return;
+    }
+
+    const sorted = [...clipRegions].sort((a, b) => a.startMs - b.startMs);
+
+    // Start from playhead position
+    const playheadMs = currentTimeMs;
+
+    // Check if there's space at playhead position
+    const findGapAtPosition = (startPos: number): { start: number; end: number } | null => {
+      // Find overlapping or next region
+      for (const region of sorted) {
+        // If startPos is inside a region, no gap here
+        if (startPos >= region.startMs && startPos < region.endMs) {
+          return null;
+        }
+        // If region is after startPos, gap ends at region start
+        if (region.startMs > startPos) {
+          return { start: startPos, end: region.startMs };
+        }
+        // If region ends before startPos, continue checking
+        if (region.endMs <= startPos) {
+          continue;
+        }
+      }
+      // No region after startPos, gap extends to end
+      return { start: startPos, end: totalMs };
+    };
+
+    // Try to add at playhead first
+    let gap = findGapAtPosition(playheadMs);
+
+    // If playhead is inside a clip or no space, find next available gap
+    if (!gap || gap.end - gap.start < minDuration) {
+      // Find all available gaps
+      const gaps: { start: number; end: number; size: number }[] = [];
+      let currentPos = 0;
+
+      for (const region of sorted) {
+        if (currentPos < region.startMs) {
+          gaps.push({
+            start: currentPos,
+            end: region.startMs,
+            size: region.startMs - currentPos,
+          });
+        }
+        currentPos = Math.max(currentPos, region.endMs);
+      }
+
+      if (currentPos < totalMs) {
+        gaps.push({
+          start: currentPos,
+          end: totalMs,
+          size: totalMs - currentPos,
+        });
+      }
+
+      // Filter gaps that can fit at least minDuration
+      const viableGaps = gaps.filter(g => g.size >= minDuration);
+
+      if (viableGaps.length === 0) {
+        toast.error("No space available", {
+          description: "Remove or resize existing clip regions to add more.",
+        });
+        return;
+      }
+
+      // Prefer gap closest to playhead, otherwise use largest
+      const gapsAfterPlayhead = viableGaps.filter(g => g.start >= playheadMs);
+      const bestGap = gapsAfterPlayhead.length > 0
+        ? gapsAfterPlayhead[0]
+        : viableGaps.reduce((a, b) => a.size > b.size ? a : b);
+
+      gap = { start: bestGap.start, end: bestGap.end };
+    }
+
+    // Use preferred duration if it fits, otherwise use the gap size
+    const availableSpace = gap.end - gap.start;
+    const duration = Math.min(preferredDuration, availableSpace);
+
+    onClipAdded({ start: gap.start, end: gap.start + duration });
+  }, [videoDuration, totalMs, safeMinDurationMs, clipRegions, onClipAdded, currentTimeMs]);
+
   const clampedRange = useMemo<Range>(() => {
     if (totalMs === 0) {
       return range;
@@ -522,17 +690,40 @@ export default function TimelineEditor({
     };
   }, [range, totalMs]);
 
-  const timelineItems = useMemo<TimelineRenderItem[]>(() => {
+  const zoomItems = useMemo<TimelineRenderItem[]>(() => {
     return [...zoomRegions]
       .sort((a, b) => a.startMs - b.startMs)
       .map((region, index) => ({
         id: region.id,
-        rowId: ROW_ID,
+        rowId: ZOOM_ROW_ID,
         span: { start: region.startMs, end: region.endMs },
         label: `Zoom ${index + 1}`,
+        itemType: 'zoom' as const,
         zoomDepth: region.depth,
       }));
   }, [zoomRegions]);
+
+  const clipItems = useMemo<TimelineRenderItem[]>(() => {
+    return [...clipRegions]
+      .sort((a, b) => a.startMs - b.startMs)
+      .map((region, index) => ({
+        id: region.id,
+        rowId: CLIP_ROW_ID,
+        span: { start: region.startMs, end: region.endMs },
+        label: `Clip ${index + 1}`,
+        itemType: 'clip' as const,
+        clipIndex: index,
+      }));
+  }, [clipRegions]);
+
+  // Handler for item span changes - routes to correct handler based on item type
+  const handleItemSpanChange = useCallback((id: string, span: Span) => {
+    if (id.startsWith('clip-')) {
+      onClipSpanChange(id, span);
+    } else {
+      onZoomSpanChange(id, span);
+    }
+  }, [onClipSpanChange, onZoomSpanChange]);
 
   if (!videoDuration || videoDuration === 0) {
     return (
@@ -551,10 +742,28 @@ export default function TimelineEditor({
   return (
     <div className="flex-1 flex flex-col bg-[#09090b] overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-white/5 bg-[#09090b]">
-        <Button 
-          onClick={handleAddZoom} 
-          variant="outline" 
-          size="sm" 
+        <Button
+          onClick={handleAddClip}
+          variant="outline"
+          size="sm"
+          className="gap-2 h-7 px-3 text-xs bg-white/5 border-white/10 text-slate-200 hover:bg-[#3B82F6] hover:text-white hover:border-[#3B82F6] transition-all"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Clip
+        </Button>
+        <Button
+          onClick={onCutClip}
+          variant="outline"
+          size="sm"
+          className="gap-2 h-7 px-3 text-xs bg-white/5 border-white/10 text-slate-200 hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-all"
+        >
+          <Scissors className="w-3.5 h-3.5" />
+          Cut
+        </Button>
+        <Button
+          onClick={handleAddZoom}
+          variant="outline"
+          size="sm"
           className="gap-2 h-7 px-3 text-xs bg-white/5 border-white/10 text-slate-200 hover:bg-[#34B27B] hover:text-white hover:border-[#34B27B] transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
@@ -581,16 +790,21 @@ export default function TimelineEditor({
           minItemDurationMs={timelineScale.minItemDurationMs}
           minVisibleRangeMs={timelineScale.minVisibleRangeMs}
           gridSizeMs={timelineScale.gridMs}
-          onItemSpanChange={onZoomSpanChange}
+          onItemSpanChange={handleItemSpanChange}
+          clipRegions={clipRegions}
+          zoomRegions={zoomRegions}
         >
           <Timeline
-            items={timelineItems}
+            clipItems={clipItems}
+            zoomItems={zoomItems}
             videoDurationMs={totalMs}
             intervalMs={timelineScale.intervalMs}
             currentTimeMs={currentTimeMs}
             onSeek={onSeek}
             onSelectZoom={onSelectZoom}
+            onSelectClip={onSelectClip}
             selectedZoomId={selectedZoomId}
+            selectedClipId={selectedClipId}
           />
         </TimelineWrapper>
       </div>

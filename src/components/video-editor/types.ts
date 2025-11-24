@@ -13,6 +13,16 @@ export interface ZoomRegion {
   focus: ZoomFocus;
 }
 
+// =====================================
+// Clip Region Types
+// =====================================
+
+export interface ClipRegion {
+  id: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface CropRegion {
   x: number; // 0-1 normalized
   y: number; // 0-1 normalized

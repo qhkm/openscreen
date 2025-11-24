@@ -1,6 +1,6 @@
 
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
@@ -20,6 +20,7 @@ import {
   type ZoomDepth,
   type ZoomFocus,
   type ZoomRegion,
+  type ClipRegion,
   type CropRegion,
   type CursorSettings,
   type MouseTrackingEvent,
@@ -27,6 +28,7 @@ import {
   type ExportOptions,
 } from "./types";
 import { VideoExporter, type ExportProgress } from "@/lib/exporter";
+import { getTotalClipDuration, sourceTimeToOutputTime, outputTimeToSourceTime } from "./clipUtils";
 
 const WALLPAPER_COUNT = 23;
 const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wallpapers/wallpaper${i + 1}.jpg`);
@@ -44,6 +46,8 @@ export default function VideoEditor() {
   const [cropRegion, setCropRegion] = useState<CropRegion>(DEFAULT_CROP_REGION);
   const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
   const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
+  const [clipRegions, setClipRegions] = useState<ClipRegion[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -56,6 +60,7 @@ export default function VideoEditor() {
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
+  const nextClipIdRef = useRef(1);
   const exporterRef = useRef<VideoExporter | null>(null);
 
   useEffect(() => {
@@ -115,6 +120,29 @@ export default function VideoEditor() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [togglePlayPause]);
 
+  // Compute output duration (total clip duration) and output current time
+  const outputDuration = useMemo(() => {
+    if (clipRegions.length === 0) return duration;
+    return getTotalClipDuration(clipRegions) / 1000; // Convert ms to seconds
+  }, [clipRegions, duration]);
+
+  const outputCurrentTime = useMemo(() => {
+    if (clipRegions.length === 0) return currentTime;
+    const outputMs = sourceTimeToOutputTime(currentTime * 1000, clipRegions);
+    // If current time is outside clips, return 0 or end of output
+    if (outputMs === null) {
+      // Find if we're before or after all clips
+      const sortedClips = [...clipRegions].sort((a, b) => a.startMs - b.startMs);
+      const firstClip = sortedClips[0];
+      const lastClip = sortedClips[sortedClips.length - 1];
+      if (currentTime * 1000 < firstClip.startMs) return 0;
+      if (currentTime * 1000 > lastClip.endMs) return outputDuration;
+      return 0;
+    }
+    return outputMs / 1000; // Convert ms to seconds
+  }, [clipRegions, currentTime, outputDuration]);
+
+  // Seek in source time (used by timeline which shows source positions)
   function handleSeek(time: number) {
     const video = videoPlaybackRef.current?.video;
     if (!video) return;
@@ -127,6 +155,20 @@ export default function VideoEditor() {
       video.fastSeek(time);
     } else {
       video.currentTime = time;
+    }
+  }
+
+  // Seek in output time (used by playback controls which show clip-adjusted time)
+  function handleSeekOutput(outputTime: number) {
+    if (clipRegions.length === 0) {
+      handleSeek(outputTime);
+      return;
+    }
+
+    // Convert output time to source time
+    const sourceMs = outputTimeToSourceTime(outputTime * 1000, clipRegions);
+    if (sourceMs !== null) {
+      handleSeek(sourceMs / 1000);
     }
   }
 
@@ -199,7 +241,133 @@ export default function VideoEditor() {
     }
   }, [selectedZoomId]);
 
-  // Keyboard shortcut: Delete/Backspace to remove selected zoom region
+  // Clip region handlers
+  const handleSelectClip = useCallback((id: string | null) => {
+    setSelectedClipId(id);
+    if (id) setSelectedZoomId(null); // Deselect zoom when clip is selected
+  }, []);
+
+  const handleClipAdded = useCallback((span: Span) => {
+    const id = `clip-${nextClipIdRef.current++}`;
+    const newRegion: ClipRegion = {
+      id,
+      startMs: Math.round(span.start),
+      endMs: Math.round(span.end),
+    };
+    console.log('Clip region added:', newRegion);
+    setClipRegions((prev) => [...prev, newRegion]);
+    setSelectedClipId(id);
+    setSelectedZoomId(null);
+  }, []);
+
+  const handleClipSpanChange = useCallback((id: string, span: Span) => {
+    console.log('Clip span changed:', { id, start: Math.round(span.start), end: Math.round(span.end) });
+    setClipRegions((prev) =>
+      prev.map((region) =>
+        region.id === id
+          ? {
+              ...region,
+              startMs: Math.round(span.start),
+              endMs: Math.round(span.end),
+            }
+          : region,
+      ),
+    );
+  }, []);
+
+  const handleClipDelete = useCallback((id: string) => {
+    console.log('Clip region deleted:', id);
+    setClipRegions((prev) => prev.filter((region) => region.id !== id));
+    if (selectedClipId === id) {
+      setSelectedClipId(null);
+    }
+  }, [selectedClipId]);
+
+  // Cut/split clip at playhead position
+  const handleCutClip = useCallback(() => {
+    const playheadMs = Math.round(currentTime * 1000);
+    const minClipDuration = 100; // Minimum 100ms clip duration
+
+    // Find the clip that contains the playhead
+    const clipToCut = clipRegions.find(
+      (clip) => clip.startMs < playheadMs && clip.endMs > playheadMs
+    );
+
+    if (!clipToCut) {
+      toast.error('No clip at playhead', {
+        description: 'Move the playhead inside a clip to cut it.',
+      });
+      return;
+    }
+
+    // Check if resulting clips would be too short
+    const leftDuration = playheadMs - clipToCut.startMs;
+    const rightDuration = clipToCut.endMs - playheadMs;
+
+    if (leftDuration < minClipDuration || rightDuration < minClipDuration) {
+      toast.error('Clip too short', {
+        description: 'Resulting clips would be too short (min 100ms).',
+      });
+      return;
+    }
+
+    // Create two new clips from the original
+    const leftClip: ClipRegion = {
+      id: clipToCut.id, // Keep original ID for left clip
+      startMs: clipToCut.startMs,
+      endMs: playheadMs,
+    };
+
+    const rightClip: ClipRegion = {
+      id: `clip-${nextClipIdRef.current++}`,
+      startMs: playheadMs,
+      endMs: clipToCut.endMs,
+    };
+
+    console.log('Cutting clip:', clipToCut, 'into:', leftClip, rightClip);
+
+    // Replace the original clip with two new clips
+    setClipRegions((prev) => {
+      const index = prev.findIndex((c) => c.id === clipToCut.id);
+      const newRegions = [...prev];
+      newRegions.splice(index, 1, leftClip, rightClip);
+      return newRegions;
+    });
+
+    // Select the right clip (after the cut)
+    setSelectedClipId(rightClip.id);
+    setSelectedZoomId(null);
+
+    toast.success('Clip split', {
+      description: 'Clip has been split at the playhead position.',
+    });
+  }, [currentTime, clipRegions]);
+
+  // Handle duration change - create default full-video clip when video loads
+  const handleDurationChange = useCallback((newDuration: number) => {
+    setDuration(newDuration);
+
+    // Create a default clip spanning the full video only if no clips exist yet
+    // and the duration is valid (greater than 0)
+    if (newDuration > 0) {
+      setClipRegions((prev) => {
+        // Only create default clip if no clips exist
+        if (prev.length === 0) {
+          const durationMs = Math.round(newDuration * 1000);
+          const defaultClip: ClipRegion = {
+            id: `clip-${nextClipIdRef.current++}`,
+            startMs: 0,
+            endMs: durationMs,
+          };
+          console.log('Created default full-video clip:', defaultClip);
+          return [defaultClip];
+        }
+        return prev;
+      });
+    }
+  }, []);
+
+  // Keyboard shortcut: K to cut clip at playhead
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if typing in an input field
@@ -207,16 +375,40 @@ export default function VideoEditor() {
         return;
       }
 
-      // Delete/Backspace removes selected zoom region
-      if ((e.code === 'Delete' || e.code === 'Backspace') && selectedZoomId) {
+      // K key to cut clip at playhead (common video editor shortcut)
+      if (e.code === 'KeyK') {
         e.preventDefault();
-        handleZoomDelete(selectedZoomId);
+        handleCutClip();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedZoomId, handleZoomDelete]);
+  }, [handleCutClip]);
+
+  // Keyboard shortcut: Delete/Backspace to remove selected zoom or clip region
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // Delete/Backspace removes selected zoom or clip region
+      if (e.code === 'Delete' || e.code === 'Backspace') {
+        if (selectedClipId) {
+          e.preventDefault();
+          handleClipDelete(selectedClipId);
+        } else if (selectedZoomId) {
+          e.preventDefault();
+          handleZoomDelete(selectedZoomId);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedZoomId, selectedClipId, handleZoomDelete, handleClipDelete]);
 
   useEffect(() => {
     if (selectedZoomId && !zoomRegions.some((region) => region.id === selectedZoomId)) {
@@ -263,6 +455,7 @@ export default function VideoEditor() {
         codec: 'avc1.640033',
         wallpaper,
         zoomRegions,
+        clipRegions,
         showShadow,
         showBlur,
         cropRegion,
@@ -372,16 +565,16 @@ export default function VideoEditor() {
         {/* Left Column - Video & Timeline */}
         <div className="flex-[7] flex flex-col gap-3 min-w-0 h-full">
           {/* Video Preview Area */}
-          <div className="flex-shrink-0 bg-black/40 rounded-2xl border border-white/5 shadow-2xl overflow-hidden">
-            <div className="flex flex-col">
-              {/* Video Container - Fixed aspect ratio */}
-              <div className="relative w-full" style={{ paddingBottom: '56.25%' }}> {/* 16:9 aspect ratio */}
+          <div className="flex-1 min-h-0 bg-black/40 rounded-2xl border border-white/5 shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex flex-col flex-1 min-h-0">
+              {/* Video Container - Flexible height with max aspect ratio */}
+              <div className="relative flex-1 min-h-0" style={{ maxHeight: 'calc(100% - 60px)' }}> {/* Leave room for controls */}
                 <div className="absolute inset-0 flex items-center justify-center p-4">
                   <div className="relative w-full h-full max-w-full max-h-full">
                     <VideoPlayback
                       ref={videoPlaybackRef}
                       videoPath={videoPath || ''}
-                      onDurationChange={setDuration}
+                      onDurationChange={handleDurationChange}
                       onTimeUpdate={setCurrentTime}
                       onPlayStateChange={setIsPlaying}
                       onError={setError}
@@ -398,6 +591,7 @@ export default function VideoEditor() {
                       mouseTrackingData={mouseTrackingData}
                       sourceBounds={sourceBounds}
                       initialMousePosition={initialMousePosition}
+                      clipRegions={clipRegions}
                     />
                   </div>
                 </div>
@@ -407,17 +601,17 @@ export default function VideoEditor() {
               <div className="px-4 pb-3 pt-2">
                 <PlaybackControls
                   isPlaying={isPlaying}
-                  currentTime={currentTime}
-                  duration={duration}
+                  currentTime={outputCurrentTime}
+                  duration={outputDuration}
                   onTogglePlayPause={togglePlayPause}
-                  onSeek={handleSeek}
+                  onSeek={handleSeekOutput}
                 />
               </div>
             </div>
           </div>
 
-          {/* Timeline Area */}
-          <div className="flex-1 min-h-[180px] bg-[#09090b] rounded-2xl border border-white/5 shadow-lg overflow-hidden flex flex-col">
+          {/* Timeline Area - Fixed height for two rows (clips + zooms) */}
+          <div className="flex-shrink-0 h-[200px] bg-[#09090b] rounded-2xl border border-white/5 shadow-lg overflow-hidden flex flex-col">
             <TimelineEditor
               videoDuration={duration}
               currentTime={currentTime}
@@ -428,6 +622,13 @@ export default function VideoEditor() {
               onZoomDelete={handleZoomDelete}
               selectedZoomId={selectedZoomId}
               onSelectZoom={handleSelectZoom}
+              clipRegions={clipRegions}
+              onClipAdded={handleClipAdded}
+              onClipSpanChange={handleClipSpanChange}
+              onClipDelete={handleClipDelete}
+              selectedClipId={selectedClipId}
+              onSelectClip={handleSelectClip}
+              onCutClip={handleCutClip}
             />
           </div>
         </div>

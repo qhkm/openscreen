@@ -2,6 +2,10 @@ import { useCallback } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { TimelineContext } from "dnd-timeline";
 import type { DragEndEvent, Range, ResizeEndEvent, Span } from "dnd-timeline";
+import type { ZoomRegion, ClipRegion } from "../types";
+
+// Snap threshold in milliseconds - items will snap when within this distance
+const SNAP_THRESHOLD_MS = 50;
 
 interface TimelineWrapperProps {
   children: ReactNode;
@@ -13,6 +17,9 @@ interface TimelineWrapperProps {
   minVisibleRangeMs: number;
   gridSizeMs: number;
   onItemSpanChange: (id: string, span: Span) => void;
+  // For snapping
+  clipRegions: ClipRegion[];
+  zoomRegions: ZoomRegion[];
 }
 
 export default function TimelineWrapper({
@@ -25,8 +32,95 @@ export default function TimelineWrapper({
   minVisibleRangeMs,
   gridSizeMs: _gridSizeMs,
   onItemSpanChange,
+  clipRegions,
+  zoomRegions,
 }: TimelineWrapperProps) {
   const totalMs = Math.max(0, Math.round(videoDuration * 1000));
+
+  // Get all snap points (edges of all items) for a given item type
+  const getSnapPoints = useCallback((activeItemId: string): number[] => {
+    const isClipItem = activeItemId.startsWith('clip-');
+    const regions = isClipItem ? clipRegions : zoomRegions;
+
+    const points: number[] = [0, totalMs]; // Include timeline boundaries
+
+    regions.forEach((region) => {
+      if (region.id !== activeItemId) {
+        points.push(region.startMs, region.endMs);
+      }
+    });
+
+    return points;
+  }, [clipRegions, zoomRegions, totalMs]);
+
+  // Snap a span to nearby edges
+  const snapSpan = useCallback((span: Span, activeItemId: string): Span => {
+    const snapPoints = getSnapPoints(activeItemId);
+    const duration = span.end - span.start;
+
+    let snappedStart = span.start;
+    let snappedEnd = span.end;
+    let startSnapped = false;
+    let endSnapped = false;
+
+    // Try to snap start edge
+    for (const point of snapPoints) {
+      const distanceToStart = Math.abs(span.start - point);
+      if (distanceToStart <= SNAP_THRESHOLD_MS) {
+        snappedStart = point;
+        startSnapped = true;
+        break;
+      }
+    }
+
+    // Try to snap end edge
+    for (const point of snapPoints) {
+      const distanceToEnd = Math.abs(span.end - point);
+      if (distanceToEnd <= SNAP_THRESHOLD_MS) {
+        snappedEnd = point;
+        endSnapped = true;
+        break;
+      }
+    }
+
+    // If only one edge snapped during a drag (not resize), maintain duration
+    // For drag operations, we want to move the whole item
+    if (startSnapped && !endSnapped) {
+      snappedEnd = snappedStart + duration;
+    } else if (endSnapped && !startSnapped) {
+      snappedStart = snappedEnd - duration;
+    }
+
+    return { start: snappedStart, end: snappedEnd };
+  }, [getSnapPoints]);
+
+  // Snap a span during resize (only snap the edge being resized)
+  const snapSpanResize = useCallback((span: Span, activeItemId: string, resizeEdge: 'start' | 'end'): Span => {
+    const snapPoints = getSnapPoints(activeItemId);
+
+    let snappedStart = span.start;
+    let snappedEnd = span.end;
+
+    if (resizeEdge === 'start') {
+      for (const point of snapPoints) {
+        const distance = Math.abs(span.start - point);
+        if (distance <= SNAP_THRESHOLD_MS) {
+          snappedStart = point;
+          break;
+        }
+      }
+    } else {
+      for (const point of snapPoints) {
+        const distance = Math.abs(span.end - point);
+        if (distance <= SNAP_THRESHOLD_MS) {
+          snappedEnd = point;
+          break;
+        }
+      }
+    }
+
+    return { start: snappedStart, end: snappedEnd };
+  }, [getSnapPoints]);
 
   const clampSpanToBounds = useCallback(
     (span: Span): Span => {
@@ -88,21 +182,28 @@ export default function TimelineWrapper({
     (event: ResizeEndEvent) => {
       const updatedSpan = event.active.data.current.getSpanFromResizeEvent?.(event);
       if (!updatedSpan) return;
-      
+
       const activeItemId = event.active.id as string;
-      const clampedSpan = clampSpanToBounds(updatedSpan);
+
+      // Determine which edge is being resized by comparing to original span
+      const originalSpan = event.active.data.current.span as Span | undefined;
+      const resizeEdge: 'start' | 'end' = originalSpan && Math.abs(updatedSpan.start - originalSpan.start) > Math.abs(updatedSpan.end - originalSpan.end) ? 'start' : 'end';
+
+      // Apply snapping first, then clamp
+      const snappedSpan = snapSpanResize(updatedSpan, activeItemId, resizeEdge);
+      const clampedSpan = clampSpanToBounds(snappedSpan);
 
       if (clampedSpan.end - clampedSpan.start < Math.min(minItemDurationMs, totalMs || minItemDurationMs)) {
         return;
       }
-      
+
       if (hasOverlap(clampedSpan, activeItemId)) {
         return;
       }
 
       onItemSpanChange(activeItemId, clampedSpan);
     },
-    [clampSpanToBounds, hasOverlap, minItemDurationMs, onItemSpanChange, totalMs]
+    [clampSpanToBounds, hasOverlap, minItemDurationMs, onItemSpanChange, totalMs, snapSpanResize]
   );
 
   const onDragEnd = useCallback(
@@ -110,17 +211,20 @@ export default function TimelineWrapper({
       const activeRowId = event.over?.id as string;
       const updatedSpan = event.active.data.current.getSpanFromDragEvent?.(event);
       if (!updatedSpan || !activeRowId) return;
-      
+
       const activeItemId = event.active.id as string;
-      const clampedSpan = clampSpanToBounds(updatedSpan);
-      
+
+      // Apply snapping first, then clamp
+      const snappedSpan = snapSpan(updatedSpan, activeItemId);
+      const clampedSpan = clampSpanToBounds(snappedSpan);
+
       if (hasOverlap(clampedSpan, activeItemId)) {
         return;
       }
 
       onItemSpanChange(activeItemId, clampedSpan);
     },
-    [clampSpanToBounds, hasOverlap, onItemSpanChange]
+    [clampSpanToBounds, hasOverlap, onItemSpanChange, snapSpan]
   );
 
   const handleRangeChange = useCallback(

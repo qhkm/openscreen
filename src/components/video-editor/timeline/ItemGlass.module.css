@@ -29,11 +29,32 @@
   top: 0;
   bottom: 0;
   background: #34B27B;
-  width: 4px;
+  width: 6px;
   pointer-events: none;
   z-index: 2;
   opacity: 0;
-  transition: opacity 0.2s, width 0.2s;
+  transition: opacity 0.2s, width 0.2s, background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Grip lines indicator */
+.zoomEndCap::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 16px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.8) 0px,
+    rgba(255, 255, 255, 0.8) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+  border-radius: 1px;
 }
 
 .glassGreen:hover .zoomEndCap,
@@ -48,6 +69,84 @@
   border-bottom-left-radius: 7px;
 }
 .zoomEndCap.right {
+  right: 0;
+  cursor: ew-resize;
+  border-top-right-radius: 7px;
+  border-bottom-right-radius: 7px;
+}
+
+/* Blue styling for Clip items */
+.glassBlue {
+  position: relative;
+  border-radius: 8px;
+  -corner-smoothing: antialiased;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  box-shadow: 0 2px 12px 0 rgba(59, 130, 246, 0.1) inset;
+  margin: 2px 0;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glassBlue:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 4px 20px 0 rgba(59, 130, 246, 0.2) inset;
+}
+
+.glassBlue.selected {
+  background: rgba(59, 130, 246, 0.35);
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 1px #3B82F6, 0 4px 20px 0 rgba(59, 130, 246, 0.3) inset;
+  z-index: 10;
+}
+
+.clipEndCap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #3B82F6;
+  width: 6px;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.2s, width 0.2s, background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Grip lines indicator */
+.clipEndCap::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 16px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.8) 0px,
+    rgba(255, 255, 255, 0.8) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+  border-radius: 1px;
+}
+
+.glassBlue:hover .clipEndCap,
+.glassBlue.selected .clipEndCap {
+  opacity: 1;
+}
+
+.clipEndCap.left {
+  left: 0;
+  cursor: ew-resize;
+  border-top-left-radius: 7px;
+  border-bottom-left-radius: 7px;
+}
+.clipEndCap.right {
   right: 0;
   cursor: ew-resize;
   border-top-right-radius: 7px;

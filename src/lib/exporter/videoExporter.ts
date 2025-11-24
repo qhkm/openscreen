@@ -2,12 +2,14 @@ import type { ExportConfig, ExportProgress, ExportResult, CursorConfig } from '.
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
-import type { ZoomRegion, CropRegion } from '@/components/video-editor/types';
+import type { ZoomRegion, CropRegion, ClipRegion } from '@/components/video-editor/types';
+import { generateClipFrameTimes } from '@/components/video-editor/clipUtils';
 
 interface VideoExporterConfig extends ExportConfig {
   videoUrl: string;
   wallpaper: string;
   zoomRegions: ZoomRegion[];
+  clipRegions: ClipRegion[];
   showShadow: boolean;
   showBlur: boolean;
   cropRegion: CropRegion;
@@ -55,8 +57,26 @@ export class VideoExporter {
       });
       await this.renderer.initialize();
 
+      // Generate frame times based on clip regions
+      // If no clips, export entire video; otherwise only export frames within clips
+      const clipRegions = this.config.clipRegions;
+      let frameTimes: number[];
+
+      if (clipRegions.length === 0) {
+        // No clips - export entire video
+        const totalFrames = Math.ceil(videoInfo.duration * this.config.frameRate);
+        frameTimes = [];
+        for (let i = 0; i < totalFrames; i++) {
+          frameTimes.push(i / this.config.frameRate);
+        }
+      } else {
+        // Generate frame times only for content within clips
+        frameTimes = generateClipFrameTimes(clipRegions, this.config.frameRate);
+      }
+
+      const totalFrames = frameTimes.length;
+
       // Initialize video encoder
-      const totalFrames = Math.ceil(videoInfo.duration * this.config.frameRate);
       await this.initializeEncoder();
 
       // Initialize muxer
@@ -72,24 +92,28 @@ export class VideoExporter {
       // Process frames with optimized seeking
       const frameDuration = 1_000_000 / this.config.frameRate; // in microseconds
       let frameIndex = 0;
-      const timeStep = 1 / this.config.frameRate;
 
       // Pre-load first frame
-      videoElement.currentTime = 0;
-      await new Promise(resolve => {
-        const onSeeked = () => {
-          videoElement.removeEventListener('seeked', onSeeked);
-          resolve(null);
-        };
-        videoElement.addEventListener('seeked', onSeeked);
-      });
+      if (frameTimes.length > 0) {
+        videoElement.currentTime = frameTimes[0];
+        await new Promise(resolve => {
+          const onSeeked = () => {
+            videoElement.removeEventListener('seeked', onSeeked);
+            resolve(null);
+          };
+          videoElement.addEventListener('seeked', onSeeked);
+        });
+      }
 
       while (frameIndex < totalFrames && !this.cancelled) {
-        const timestamp = frameIndex * frameDuration;
-        const videoTime = frameIndex * timeStep;
+        // Source video time (where to seek in original video)
+        const sourceVideoTime = frameTimes[frameIndex];
+        // Output timestamp (continuous timestamp in exported video)
+        const outputTimestamp = frameIndex * frameDuration;
+
         // Seek to frame (only seek if not already there)
-        if (Math.abs(videoElement.currentTime - videoTime) > 0.001) {
-          videoElement.currentTime = videoTime;
+        if (Math.abs(videoElement.currentTime - sourceVideoTime) > 0.001) {
+          videoElement.currentTime = sourceVideoTime;
           await Promise.race([
             new Promise(resolve => {
               const onSeeked = () => {
@@ -104,13 +128,15 @@ export class VideoExporter {
         }
 
         // Create a VideoFrame from the video element (on GPU!)
+        // Use source video time for rendering effects (zoom regions need source time)
+        const sourceTimestamp = sourceVideoTime * 1_000_000; // Convert to microseconds
         const videoFrame = new VideoFrame(videoElement, {
-          timestamp,
+          timestamp: sourceTimestamp,
         });
 
-        // Render the frame with all effects
-        await this.renderer!.renderFrame(videoFrame, timestamp);
-        
+        // Render the frame with all effects (using source time for zoom calculations)
+        await this.renderer!.renderFrame(videoFrame, sourceTimestamp);
+
         videoFrame.close();
 
         while (this.encodeQueue >= this.MAX_ENCODE_QUEUE && !this.cancelled) {
@@ -120,11 +146,10 @@ export class VideoExporter {
         if (this.cancelled) break;
 
         const canvas = this.renderer!.getCanvas();
-        
 
         // @ts-ignore - TypeScript definitions may not include all VideoFrameInit properties
         const exportFrame = new VideoFrame(canvas, {
-          timestamp,
+          timestamp: outputTimestamp, // Use continuous output timestamp for encoding
           duration: frameDuration,
           colorSpace: {
             primaries: 'bt709',

@@ -1,8 +1,10 @@
 import { useItem } from "dnd-timeline";
 import type { Span } from "dnd-timeline";
 import { cn } from "@/lib/utils";
-import { ZoomIn } from "lucide-react";
+import { ZoomIn, Scissors } from "lucide-react";
 import glassStyles from "./ItemGlass.module.css";
+
+export type ItemType = 'zoom' | 'clip';
 
 interface ItemProps {
   id: string;
@@ -11,7 +13,9 @@ interface ItemProps {
   children: React.ReactNode;
   isSelected?: boolean;
   onSelect?: () => void;
-  zoomDepth: number;
+  itemType: ItemType;
+  zoomDepth?: number; // Only used for zoom items
+  clipIndex?: number; // Only used for clip items
 }
 
 // Map zoom depth to multiplier labels
@@ -23,12 +27,14 @@ const ZOOM_LABELS: Record<number, string> = {
   5: "3.5×",
 };
 
-export default function Item({ id, span, rowId, isSelected = false, onSelect, zoomDepth }: ItemProps) {
+export default function Item({ id, span, rowId, isSelected = false, onSelect, itemType, zoomDepth, clipIndex }: ItemProps) {
   const { setNodeRef, attributes, listeners, itemStyle, itemContentStyle } = useItem({
     id,
     span,
     data: { rowId },
   });
+
+  const isClip = itemType === 'clip';
 
   return (
     <div
@@ -44,7 +50,7 @@ export default function Item({ id, span, rowId, isSelected = false, onSelect, zo
         <div
           className={cn(
             "w-full h-full overflow-hidden flex items-center justify-center gap-1.5 cursor-grab active:cursor-grabbing relative",
-            glassStyles.glassGreen,
+            isClip ? glassStyles.glassBlue : glassStyles.glassGreen,
             isSelected && glassStyles.selected
           )}
           style={{ height: 48 }}
@@ -53,15 +59,35 @@ export default function Item({ id, span, rowId, isSelected = false, onSelect, zo
             onSelect?.();
           }}
         >
-          <div className={cn(glassStyles.zoomEndCap, glassStyles.left)} />
-          <div className={cn(glassStyles.zoomEndCap, glassStyles.right)} />
-          
+          {isClip ? (
+            <>
+              <div className={cn(glassStyles.clipEndCap, glassStyles.left)} />
+              <div className={cn(glassStyles.clipEndCap, glassStyles.right)} />
+            </>
+          ) : (
+            <>
+              <div className={cn(glassStyles.zoomEndCap, glassStyles.left)} />
+              <div className={cn(glassStyles.zoomEndCap, glassStyles.right)} />
+            </>
+          )}
+
           {/* Content */}
           <div className="relative z-10 flex items-center gap-1.5 text-white/90 opacity-80 group-hover:opacity-100 transition-opacity select-none">
-            <ZoomIn className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-semibold tracking-tight">
-              {ZOOM_LABELS[zoomDepth] || `${zoomDepth}×`}
-            </span>
+            {isClip ? (
+              <>
+                <Scissors className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-semibold tracking-tight">
+                  Clip {clipIndex !== undefined ? clipIndex + 1 : ''}
+                </span>
+              </>
+            ) : (
+              <>
+                <ZoomIn className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-semibold tracking-tight">
+                  {ZOOM_LABELS[zoomDepth || 3] || `${zoomDepth}×`}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

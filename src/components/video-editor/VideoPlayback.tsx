@@ -2,7 +2,7 @@ import type React from "react";
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
 import { getAssetPath } from "@/lib/assetPath";
 import * as PIXI from 'pixi.js';
-import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type CursorSettings, type MouseTrackingEvent, type SourceBounds } from "./types";
+import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type CursorSettings, type MouseTrackingEvent, type SourceBounds, type ClipRegion } from "./types";
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -22,6 +22,7 @@ interface VideoPlaybackProps {
   onError: (error: string) => void;
   wallpaper?: string;
   zoomRegions: ZoomRegion[];
+  clipRegions: ClipRegion[];
   selectedZoomId: string | null;
   onSelectZoom: (id: string | null) => void;
   onZoomFocusChange: (id: string, focus: ZoomFocus) => void;
@@ -52,6 +53,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   onError,
   wallpaper,
   zoomRegions,
+  clipRegions,
   selectedZoomId,
   onSelectZoom,
   onZoomFocusChange,
@@ -77,6 +79,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const focusIndicatorRef = useRef<HTMLDivElement | null>(null);
   const currentTimeRef = useRef(0);
   const zoomRegionsRef = useRef<ZoomRegion[]>([]);
+  const clipRegionsRef = useRef<ClipRegion[]>([]);
   const selectedZoomIdRef = useRef<string | null>(null);
   const animationStateRef = useRef({ scale: 1, focusX: DEFAULT_FOCUS.cx, focusY: DEFAULT_FOCUS.cy });
   const blurFilterRef = useRef<PIXI.BlurFilter | null>(null);
@@ -287,6 +290,46 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   useEffect(() => {
     zoomRegionsRef.current = zoomRegions;
   }, [zoomRegions]);
+
+  useEffect(() => {
+    clipRegionsRef.current = clipRegions;
+
+    // When clips change, validate current position and adjust if needed
+    const video = videoRef.current;
+    if (video && clipRegions.length > 0 && !isPlayingRef.current) {
+      const currentMs = video.currentTime * 1000;
+
+      // Check if current position is inside any clip
+      const isInsideClip = clipRegions.some(
+        clip => currentMs >= clip.startMs && currentMs <= clip.endMs
+      );
+
+      if (!isInsideClip) {
+        // Find the nearest valid position
+        // First, try to find the closest clip edge
+        let nearestPosition = clipRegions[0].startMs;
+        let minDistance = Math.abs(currentMs - nearestPosition);
+
+        for (const clip of clipRegions) {
+          const distToStart = Math.abs(currentMs - clip.startMs);
+          const distToEnd = Math.abs(currentMs - clip.endMs);
+
+          if (distToStart < minDistance) {
+            minDistance = distToStart;
+            nearestPosition = clip.startMs;
+          }
+          if (distToEnd < minDistance) {
+            minDistance = distToEnd;
+            nearestPosition = clip.endMs;
+          }
+        }
+
+        // Seek to nearest valid position
+        video.currentTime = nearestPosition / 1000;
+        onTimeUpdate(video.currentTime);
+      }
+    }
+  }, [clipRegions, onTimeUpdate]);
 
   useEffect(() => {
     selectedZoomIdRef.current = selectedZoomId;
@@ -574,6 +617,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       allowPlaybackRef,
       currentTimeRef,
       timeUpdateAnimationRef,
+      clipRegionsRef,
       onPlayStateChange,
       onTimeUpdate,
     });
