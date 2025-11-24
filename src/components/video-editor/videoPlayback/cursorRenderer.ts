@@ -48,7 +48,7 @@ export class CursorRenderer {
     this.drawCursor();
   }
 
-  setTrackingData(data: MouseTrackingEvent[], videoWidth: number, videoHeight: number, sourceBounds?: SourceBounds | null, initialMousePosition?: { x: number; y: number } | null) {
+  setTrackingData(data: MouseTrackingEvent[], videoWidth: number, videoHeight: number, sourceBounds?: SourceBounds | null, _initialMousePosition?: { x: number; y: number } | null) {
     // Normalize timestamps and map coordinates from screen space to video space
     // sourceBounds: the recorded video dimensions (in physical pixels)
     // Mouse coordinates from uiohook are in logical/screen coordinates (CSS points on macOS)

@@ -116,5 +116,6 @@ export async function getAllWindows(): Promise<WindowInfo[]> {
   if (process.platform !== 'darwin') {
     return [];
   }
-  return getAllWindowsMacOS();
+  // Not implemented yet - returns empty array
+  return [];
 }
