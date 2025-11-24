@@ -5,7 +5,7 @@ import { findDominantRegion } from '@/components/video-editor/videoPlayback/zoom
 import { applyZoomTransform } from '@/components/video-editor/videoPlayback/zoomTransform';
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA, VIEWPORT_SCALE } from '@/components/video-editor/videoPlayback/constants';
 import { clampFocusToStage as clampFocusToStageUtil } from '@/components/video-editor/videoPlayback/focusUtils';
-import type { CursorConfig } from './types';
+import type { CursorConfig, CameraConfig } from './types';
 
 interface FrameRenderConfig {
   width: number;
@@ -18,6 +18,7 @@ interface FrameRenderConfig {
   videoWidth: number;
   videoHeight: number;
   cursorConfig?: CursorConfig;
+  cameraConfig?: CameraConfig;
 }
 
 interface AnimationState {
@@ -52,6 +53,15 @@ export class FrameRenderer {
   private lastClickTime = -1;
   private readonly CLICK_EFFECT_DURATION = 400; // ms
   private readonly BASE_CURSOR_SIZE = 24;
+
+  // Camera rendering state
+  private cameraVideoElement: HTMLVideoElement | null = null;
+  private cameraVideoSource: PIXI.VideoSource | null = null;
+  private cameraVideoTexture: PIXI.Texture | null = null;
+  private cameraSprite: PIXI.Sprite | null = null;
+  private cameraOverlayContainer: PIXI.Container | null = null;
+  private cameraMaskGraphics: PIXI.Graphics | null = null;
+  private cameraBorderGraphics: PIXI.Graphics | null = null;
 
   constructor(config: FrameRenderConfig) {
     this.config = config;
@@ -137,6 +147,11 @@ export class FrameRenderer {
     // Setup cursor overlay
     if (this.config.cursorConfig) {
       this.setupCursor();
+    }
+
+    // Setup camera overlay
+    if (this.config.cameraConfig) {
+      await this.setupCamera();
     }
   }
 
@@ -303,6 +318,11 @@ export class FrameRenderer {
     // Update cursor position for this frame
     if (this.config.cursorConfig) {
       this.updateCursorForFrame(timeMs);
+    }
+
+    // Update camera overlay for this frame
+    if (this.config.cameraConfig) {
+      this.updateCameraForFrame(timeMs);
     }
 
     // Render the PixiJS stage to its canvas (video only, transparent background)
@@ -819,6 +839,243 @@ export class FrameRenderer {
     return parseInt(hex.replace('#', ''), 16);
   }
 
+  // === Camera Rendering Methods ===
+
+  private async setupCamera(): Promise<void> {
+    const cameraConfig = this.config.cameraConfig;
+    if (!cameraConfig || !this.app || !this.cameraContainer) return;
+
+    const { cameraVideoUrl, cameraSettings } = cameraConfig;
+
+    if (!cameraSettings.enabled) {
+      console.log('[FrameRenderer] Camera overlay disabled');
+      return;
+    }
+
+    console.log('[FrameRenderer] Setting up camera overlay:', {
+      url: cameraVideoUrl,
+      settings: cameraSettings,
+    });
+
+    // Create camera video element
+    this.cameraVideoElement = document.createElement('video');
+    this.cameraVideoElement.src = cameraVideoUrl;
+    this.cameraVideoElement.muted = true;
+    this.cameraVideoElement.playsInline = true;
+    this.cameraVideoElement.preload = 'auto';
+
+    // Wait for video to load
+    await new Promise<void>((resolve, reject) => {
+      if (!this.cameraVideoElement) {
+        reject(new Error('Camera video element not created'));
+        return;
+      }
+
+      const onLoadedData = () => {
+        console.log('[FrameRenderer] Camera video loaded');
+        this.cameraVideoElement?.removeEventListener('loadeddata', onLoadedData);
+        this.cameraVideoElement?.removeEventListener('error', onError);
+        resolve();
+      };
+
+      const onError = (e: Event) => {
+        console.error('[FrameRenderer] Camera video error:', e);
+        this.cameraVideoElement?.removeEventListener('loadeddata', onLoadedData);
+        this.cameraVideoElement?.removeEventListener('error', onError);
+        reject(new Error('Failed to load camera video'));
+      };
+
+      this.cameraVideoElement.addEventListener('loadeddata', onLoadedData);
+      this.cameraVideoElement.addEventListener('error', onError);
+    });
+
+    // Create PixiJS VideoSource and Texture
+    this.cameraVideoSource = new PIXI.VideoSource({
+      resource: this.cameraVideoElement,
+      autoPlay: false,
+    });
+
+    this.cameraVideoTexture = new PIXI.Texture({
+      source: this.cameraVideoSource,
+    });
+
+    // Create camera overlay container
+    this.cameraOverlayContainer = new PIXI.Container();
+    this.cameraOverlayContainer.zIndex = 999; // Render camera on top
+    this.app.stage.addChild(this.cameraOverlayContainer);
+    this.app.stage.sortableChildren = true;
+
+    // Create camera sprite
+    this.cameraSprite = new PIXI.Sprite(this.cameraVideoTexture);
+    this.cameraOverlayContainer.addChild(this.cameraSprite);
+
+    // Create mask graphics
+    this.cameraMaskGraphics = new PIXI.Graphics();
+    this.cameraOverlayContainer.addChild(this.cameraMaskGraphics);
+    this.cameraOverlayContainer.mask = this.cameraMaskGraphics;
+
+    // Create border graphics
+    this.cameraBorderGraphics = new PIXI.Graphics();
+    this.cameraOverlayContainer.addChild(this.cameraBorderGraphics);
+
+    console.log('[FrameRenderer] Camera overlay setup complete');
+  }
+
+  private updateCameraForFrame(timeMs: number): void {
+    if (!this.cameraVideoElement || !this.cameraSprite || !this.config.cameraConfig) return;
+
+    const { cameraSettings, cameraVideoWidth, cameraVideoHeight } = this.config.cameraConfig;
+
+    if (!cameraSettings.enabled) return;
+
+    // Seek camera video to current time
+    const videoTimeSec = timeMs / 1000;
+    if (Math.abs(this.cameraVideoElement.currentTime - videoTimeSec) > 0.001) {
+      this.cameraVideoElement.currentTime = videoTimeSec;
+    }
+
+    // Calculate camera overlay position and size
+    const stageWidth = this.config.width;
+    const stageHeight = this.config.height;
+
+    // Camera size as percentage of stage width
+    const cameraWidth = stageWidth * cameraSettings.size;
+    const cameraAspect = cameraVideoWidth / cameraVideoHeight;
+    const cameraHeight = cameraWidth / cameraAspect;
+
+    // Calculate position based on setting
+    let posX: number, posY: number;
+
+    if (cameraSettings.position === 'custom') {
+      posX = cameraSettings.customX * stageWidth - cameraWidth / 2;
+      posY = cameraSettings.customY * stageHeight - cameraHeight / 2;
+    } else {
+      const padding = stageWidth * 0.02; // 2% padding
+
+      switch (cameraSettings.position) {
+        case 'bottom-right':
+          posX = stageWidth - cameraWidth - padding;
+          posY = stageHeight - cameraHeight - padding;
+          break;
+        case 'bottom-left':
+          posX = padding;
+          posY = stageHeight - cameraHeight - padding;
+          break;
+        case 'top-right':
+          posX = stageWidth - cameraWidth - padding;
+          posY = padding;
+          break;
+        case 'top-left':
+          posX = padding;
+          posY = padding;
+          break;
+        default:
+          posX = stageWidth - cameraWidth - padding;
+          posY = stageHeight - cameraHeight - padding;
+      }
+    }
+
+    // Update sprite position and size
+    this.cameraSprite.x = posX;
+    this.cameraSprite.y = posY;
+    this.cameraSprite.width = cameraWidth;
+    this.cameraSprite.height = cameraHeight;
+
+    // Apply mirror (horizontal flip) if needed
+    if (cameraSettings.mirror) {
+      this.cameraSprite.scale.x = -Math.abs(this.cameraSprite.scale.x);
+      this.cameraSprite.x = posX + cameraWidth; // Adjust position for flipped sprite
+    } else {
+      this.cameraSprite.scale.x = Math.abs(this.cameraSprite.scale.x);
+      this.cameraSprite.x = posX;
+    }
+
+    // Apply brightness filter
+    if (cameraSettings.brightness !== 1.0) {
+      const brightnessFilter = new PIXI.ColorMatrixFilter();
+      brightnessFilter.brightness(cameraSettings.brightness, false);
+      this.cameraSprite.filters = [brightnessFilter];
+    } else {
+      this.cameraSprite.filters = null;
+    }
+
+    // Draw mask
+    this.drawCameraMask(posX, posY, cameraWidth, cameraHeight, cameraSettings);
+
+    // Draw border
+    this.drawCameraBorder(posX, posY, cameraWidth, cameraHeight, cameraSettings);
+  }
+
+  private drawCameraMask(x: number, y: number, width: number, height: number, settings: any): void {
+    if (!this.cameraMaskGraphics) return;
+
+    const g = this.cameraMaskGraphics;
+    g.clear();
+
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const radius = Math.min(width, height) / 2;
+
+    switch (settings.shape) {
+      case 'circle':
+        g.circle(centerX, centerY, radius);
+        g.fill({ color: 0xffffff });
+        break;
+
+      case 'squircle': {
+        // Squircle using rounded rectangle with high corner radius
+        const squircleRadius = radius * 0.27; // 27% creates squircle effect
+        g.roundRect(x, y, width, height, squircleRadius);
+        g.fill({ color: 0xffffff });
+        break;
+      }
+
+      case 'rounded-rect': {
+        const cornerRadius = (settings.borderRadius / 50) * radius;
+        g.roundRect(x, y, width, height, cornerRadius);
+        g.fill({ color: 0xffffff });
+        break;
+      }
+    }
+  }
+
+  private drawCameraBorder(x: number, y: number, width: number, height: number, settings: any): void {
+    if (!this.cameraBorderGraphics) return;
+
+    const g = this.cameraBorderGraphics;
+    g.clear();
+
+    if (settings.borderWidth <= 0) return;
+
+    const color = this.hexToNumber(settings.borderColor);
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const radius = Math.min(width, height) / 2;
+
+    g.stroke({ color, width: settings.borderWidth, alpha: 1 });
+
+    switch (settings.shape) {
+      case 'circle':
+        g.circle(centerX, centerY, radius);
+        g.stroke();
+        break;
+
+      case 'squircle': {
+        const squircleRadius = radius * 0.27;
+        g.roundRect(x, y, width, height, squircleRadius);
+        g.stroke();
+        break;
+      }
+
+      case 'rounded-rect': {
+        const cornerRadius = (settings.borderRadius / 50) * radius;
+        g.roundRect(x, y, width, height, cornerRadius);
+        g.stroke();
+        break;
+      }
+    }
+  }
+
   destroy(): void {
     if (this.videoSprite) {
       this.videoSprite.destroy();
@@ -836,6 +1093,37 @@ export class FrameRenderer {
       this.clickEffectsContainer = null;
     }
     this.normalizedTrackingData = [];
+
+    // Clean up camera resources
+    if (this.cameraVideoSource) {
+      this.cameraVideoSource.destroy();
+      this.cameraVideoSource = null;
+    }
+    if (this.cameraVideoTexture) {
+      this.cameraVideoTexture.destroy();
+      this.cameraVideoTexture = null;
+    }
+    if (this.cameraSprite) {
+      this.cameraSprite.destroy();
+      this.cameraSprite = null;
+    }
+    if (this.cameraMaskGraphics) {
+      this.cameraMaskGraphics.destroy();
+      this.cameraMaskGraphics = null;
+    }
+    if (this.cameraBorderGraphics) {
+      this.cameraBorderGraphics.destroy();
+      this.cameraBorderGraphics = null;
+    }
+    if (this.cameraOverlayContainer) {
+      this.cameraOverlayContainer.destroy({ children: true });
+      this.cameraOverlayContainer = null;
+    }
+    if (this.cameraVideoElement) {
+      this.cameraVideoElement.pause();
+      this.cameraVideoElement.src = '';
+      this.cameraVideoElement = null;
+    }
 
     if (this.app) {
       this.app.destroy(true, { children: true, texture: true, textureSource: true });

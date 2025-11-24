@@ -61,6 +61,7 @@ export default function VideoEditor() {
   const [initialMousePosition, setInitialMousePosition] = useState<{ x: number; y: number } | null>(null);
   const [cameraVideoPath, setCameraVideoPath] = useState<string | null>(null);
   const [cameraSettings, setCameraSettings] = useState<CameraOverlaySettings>(DEFAULT_CAMERA_SETTINGS);
+  const [cameraVideoDimensions, setCameraVideoDimensions] = useState<{ width: number; height: number } | null>(null);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -76,8 +77,20 @@ export default function VideoEditor() {
 
           // Load camera video if available
           if (result.cameraPath) {
-            setCameraVideoPath(`file://${result.cameraPath}`);
+            const cameraUrl = `file://${result.cameraPath}`;
+            setCameraVideoPath(cameraUrl);
             console.log('Loaded camera video:', result.cameraPath);
+
+            // Load camera video dimensions
+            const cameraVideo = document.createElement('video');
+            cameraVideo.src = cameraUrl;
+            cameraVideo.onloadedmetadata = () => {
+              setCameraVideoDimensions({
+                width: cameraVideo.videoWidth,
+                height: cameraVideo.videoHeight,
+              });
+              console.log('Camera video dimensions:', cameraVideo.videoWidth, 'x', cameraVideo.videoHeight);
+            };
           }
         } else {
           setError(result.message || 'Failed to load video');
@@ -474,6 +487,12 @@ export default function VideoEditor() {
           mouseTrackingData,
           sourceBounds,
         } : undefined,
+        cameraConfig: cameraVideoPath && cameraVideoDimensions && cameraSettings.enabled ? {
+          cameraSettings,
+          cameraVideoUrl: cameraVideoPath,
+          cameraVideoWidth: cameraVideoDimensions.width,
+          cameraVideoHeight: cameraVideoDimensions.height,
+        } : undefined,
         onProgress: (progress: ExportProgress) => {
           setExportProgress(progress);
         },
@@ -512,7 +531,7 @@ export default function VideoEditor() {
       setIsExporting(false);
       exporterRef.current = null;
     }
-  }, [videoPath, wallpaper, zoomRegions, showShadow, showBlur, cropRegion, isPlaying, cursorSettings, mouseTrackingData, sourceBounds]);
+  }, [videoPath, wallpaper, zoomRegions, clipRegions, showShadow, showBlur, cropRegion, isPlaying, cursorSettings, mouseTrackingData, sourceBounds, cameraVideoPath, cameraVideoDimensions, cameraSettings]);
 
   const handleCancelExport = useCallback(() => {
     if (exporterRef.current) {

@@ -1,4 +1,4 @@
-import type { ExportConfig, ExportProgress, ExportResult, CursorConfig } from './types';
+import type { ExportConfig, ExportProgress, ExportResult, CursorConfig, CameraConfig } from './types';
 import { VideoFileDecoder } from './videoDecoder';
 import { FrameRenderer } from './frameRenderer';
 import { VideoMuxer } from './muxer';
@@ -14,6 +14,7 @@ interface VideoExporterConfig extends ExportConfig {
   showBlur: boolean;
   cropRegion: CropRegion;
   cursorConfig?: CursorConfig;
+  cameraConfig?: CameraConfig;
   onProgress?: (progress: ExportProgress) => void;
 }
 
@@ -54,6 +55,7 @@ export class VideoExporter {
         videoWidth: videoInfo.width,
         videoHeight: videoInfo.height,
         cursorConfig: this.config.cursorConfig,
+        cameraConfig: this.config.cameraConfig,
       });
       await this.renderer.initialize();
 

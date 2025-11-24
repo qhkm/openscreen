@@ -1,4 +1,4 @@
-import type { CursorSettings, MouseTrackingEvent, SourceBounds } from '@/components/video-editor/types';
+import type { CursorSettings, MouseTrackingEvent, SourceBounds, CameraOverlaySettings } from '@/components/video-editor/types';
 
 export interface ExportConfig {
   width: number;
@@ -12,6 +12,13 @@ export interface CursorConfig {
   cursorSettings: CursorSettings;
   mouseTrackingData: MouseTrackingEvent[];
   sourceBounds: SourceBounds | null;
+}
+
+export interface CameraConfig {
+  cameraSettings: CameraOverlaySettings;
+  cameraVideoUrl: string;
+  cameraVideoWidth: number;
+  cameraVideoHeight: number;
 }
 
 export interface ExportProgress {
