@@ -1,10 +1,34 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import path from 'node:path';
+import { app } from 'electron';
 
 const execAsync = promisify(exec);
 
-// Timeout for osascript calls (ms) - increased for reliability
-const OSASCRIPT_TIMEOUT = 5000;
+// Timeout for script calls (ms) - increased for reliability
+const SCRIPT_TIMEOUT = 5000;
+
+/**
+ * Get the path to the PowerShell script for Windows
+ * Works in both dev and production (packaged) modes
+ * ONLY call this function on Windows!
+ */
+function getWindowsScriptPath(): string {
+  // Safety check - should never be called on non-Windows
+  if (process.platform !== 'win32') {
+    throw new Error('getWindowsScriptPath should only be called on Windows');
+  }
+
+  if (app.isPackaged) {
+    // In production, scripts are in resources folder
+    // process.resourcesPath uses backslashes on Windows, path.join handles this
+    return path.join(process.resourcesPath, 'scripts', 'get-window-bounds.ps1');
+  } else {
+    // In development, __dirname is dist-electron/ (compiled JS location)
+    // Scripts are in electron/scripts/, so use app.getAppPath() for reliable resolution
+    return path.join(app.getAppPath(), 'electron', 'scripts', 'get-window-bounds.ps1');
+  }
+}
 
 export interface WindowBounds {
   x: number;
@@ -62,7 +86,7 @@ JSON.stringify(result);
   try {
     const { stdout } = await execAsync(
       `osascript -l JavaScript -e '${script.replace(/'/g, "'\\''")}'`,
-      { timeout: OSASCRIPT_TIMEOUT }
+      { timeout: SCRIPT_TIMEOUT }
     );
     const window = JSON.parse(stdout.trim());
     if (window) {
@@ -85,20 +109,64 @@ JSON.stringify(result);
 }
 
 /**
- * Find window bounds by matching window name from desktopCapturer source
- *
- * Uses optimized JXA script that searches for specific window name
- * instead of enumerating all windows (much faster).
+ * Get window bounds for a specific window by name using PowerShell (Windows 10/11)
+ * Uses a separate script file with Win32 API via .NET
+ * More reliable than inline script - works across all Windows hardware configurations
  */
-export async function getWindowBoundsByName(windowName: string): Promise<WindowBounds | null> {
-  if (process.platform !== 'darwin') {
-    console.log('Window bounds API only available on macOS');
+async function getWindowByNameWindows(windowName: string): Promise<WindowInfo | null> {
+  const scriptPath = getWindowsScriptPath();
+  // Escape the window name for PowerShell argument
+  const escapedName = windowName.replace(/"/g, '""');
+
+  try {
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}" "${escapedName}"`,
+      { timeout: SCRIPT_TIMEOUT }
+    );
+
+    const trimmed = stdout.trim();
+    if (trimmed && trimmed !== 'null') {
+      const window = JSON.parse(trimmed);
+      if (window) {
+        return {
+          name: window.name || '',
+          process: window.process || '',
+          bounds: {
+            x: window.x,
+            y: window.y,
+            width: window.width,
+            height: window.height,
+          },
+        };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to get window via PowerShell:', error);
     return null;
   }
+}
 
-  console.log(`Searching for window: "${windowName}"`);
+/**
+ * Find window bounds by matching window name from desktopCapturer source
+ *
+ * Platform-specific implementations:
+ * - macOS: Uses JXA (JavaScript for Automation) via osascript
+ * - Windows: Uses PowerShell with Win32 API (works on Windows 10/11)
+ */
+export async function getWindowBoundsByName(windowName: string): Promise<WindowBounds | null> {
+  console.log(`Searching for window: "${windowName}" on ${process.platform}`);
 
-  const match = await getWindowByNameMacOS(windowName);
+  let match: WindowInfo | null = null;
+
+  if (process.platform === 'darwin') {
+    match = await getWindowByNameMacOS(windowName);
+  } else if (process.platform === 'win32') {
+    match = await getWindowByNameWindows(windowName);
+  } else {
+    console.log('Window bounds API not available on this platform');
+    return null;
+  }
 
   if (match) {
     console.log(`Found window match: "${match.name}" (${match.process})`, match.bounds);
@@ -111,11 +179,10 @@ export async function getWindowBoundsByName(windowName: string): Promise<WindowB
 
 /**
  * Get all windows for debugging
+ * Note: Not implemented yet - returns empty array on all platforms
  */
 export async function getAllWindows(): Promise<WindowInfo[]> {
-  if (process.platform !== 'darwin') {
-    return [];
-  }
   // Not implemented yet - returns empty array
+  // Can be implemented if needed for debugging
   return [];
 }

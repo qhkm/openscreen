@@ -56,5 +56,22 @@
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5"
   },
-  "main": "dist-electron/main.js"
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.openscreen.app",
+    "productName": "OpenScreen",
+    "extraResources": [
+      {
+        "from": "electron/scripts",
+        "to": "scripts",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.video"
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    }
+  }
 }
