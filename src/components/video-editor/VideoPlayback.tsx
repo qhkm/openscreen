@@ -1,8 +1,8 @@
 import type React from "react";
-import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useImperativeHandle, forwardRef, useState, useMemo, useCallback } from "react";
 import { getAssetPath } from "@/lib/assetPath";
 import * as PIXI from 'pixi.js';
-import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type CursorSettings, type MouseTrackingEvent, type SourceBounds, type ClipRegion } from "./types";
+import { ZOOM_DEPTH_SCALES, type ZoomRegion, type ZoomFocus, type ZoomDepth, type CursorSettings, type MouseTrackingEvent, type SourceBounds, type ClipRegion, type CameraOverlaySettings } from "./types";
 import { DEFAULT_FOCUS, SMOOTHING_FACTOR, MIN_DELTA } from "./videoPlayback/constants";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -12,10 +12,12 @@ import { layoutVideoContent as layoutVideoContentUtil } from "./videoPlayback/la
 import { applyZoomTransform } from "./videoPlayback/zoomTransform";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
 import { CursorRenderer } from "./videoPlayback/cursorRenderer";
-import { DEFAULT_CURSOR_SETTINGS } from "./types";
+import { CameraRenderer } from "./videoPlayback/cameraRenderer";
+import { DEFAULT_CURSOR_SETTINGS, DEFAULT_CAMERA_SETTINGS } from "./types";
 
 interface VideoPlaybackProps {
   videoPath: string;
+  cameraVideoPath?: string | null;
   onDurationChange: (duration: number) => void;
   onTimeUpdate: (time: number) => void;
   onPlayStateChange: (playing: boolean) => void;
@@ -34,6 +36,7 @@ interface VideoPlaybackProps {
   mouseTrackingData?: MouseTrackingEvent[];
   sourceBounds?: SourceBounds | null;
   initialMousePosition?: { x: number; y: number } | null;
+  cameraSettings?: CameraOverlaySettings;
 }
 
 export interface VideoPlaybackRef {
@@ -47,6 +50,7 @@ export interface VideoPlaybackRef {
 
 const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   videoPath,
+  cameraVideoPath,
   onDurationChange,
   onTimeUpdate,
   onPlayStateChange,
@@ -65,6 +69,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   mouseTrackingData,
   sourceBounds,
   initialMousePosition,
+  cameraSettings,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -97,6 +102,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
   const lockedVideoDimensionsRef = useRef<{ width: number; height: number } | null>(null);
   const layoutVideoContentRef = useRef<(() => void) | null>(null);
   const cursorRendererRef = useRef<CursorRenderer | null>(null);
+  const cameraRendererRef = useRef<CameraRenderer | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const clampFocusToStage = useCallback((focus: ZoomFocus, depth: ZoomDepth) => {
     return clampFocusToStageUtil(focus, depth, stageSizeRef.current);
@@ -201,6 +208,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       }
       allowPlaybackRef.current = true;
       try {
+        // If video has ended, seek back to start before playing
+        // This resets video.ended to false and allows replay
+        if (video.ended) {
+          video.currentTime = 0;
+        }
         await video.play();
       } catch (error) {
         allowPlaybackRef.current = false;
@@ -295,8 +307,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
     clipRegionsRef.current = clipRegions;
 
     // When clips change, validate current position and adjust if needed
+    // IMPORTANT: Only auto-adjust if not currently seeking (allow manual scrubbing)
     const video = videoRef.current;
-    if (video && clipRegions.length > 0 && !isPlayingRef.current) {
+    if (video && clipRegions.length > 0 && !isPlayingRef.current && !isSeekingRef.current) {
       const currentMs = video.currentTime * 1000;
 
       // Check if current position is inside any clip
@@ -345,6 +358,159 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       cursorRendererRef.current.setSettings(cursorSettings);
     }
   }, [cursorSettings]);
+
+  // Memoize effective camera settings to prevent unnecessary updates
+  const effectiveCameraSettings = useMemo(() => {
+    if (!cameraSettings) return null;
+    return {
+      ...cameraSettings,
+      // Only enable if both user setting is enabled AND we have a camera video
+      enabled: cameraSettings.enabled && !!cameraVideoPath,
+    };
+  }, [cameraSettings, cameraVideoPath]);
+
+  // Track previous settings to prevent redundant updates
+  const prevCameraSettingsRef = useRef<string | null>(null);
+
+  // Update camera settings when they change
+  // Only show camera overlay if we have both settings.enabled AND a camera video path
+  useEffect(() => {
+    if (!cameraRendererRef.current || !effectiveCameraSettings || !pixiReady) {
+      return;
+    }
+
+    // Stringify to compare deep equality
+    const settingsJson = JSON.stringify(effectiveCameraSettings);
+
+    // Skip if settings haven't actually changed
+    if (prevCameraSettingsRef.current === settingsJson) {
+      return;
+    }
+
+    console.log('Camera settings changed, updating renderer:', {
+      enabled: effectiveCameraSettings.enabled,
+      position: effectiveCameraSettings.position,
+      size: effectiveCameraSettings.size,
+    });
+
+    prevCameraSettingsRef.current = settingsJson;
+    cameraRendererRef.current.setSettings(effectiveCameraSettings);
+  }, [effectiveCameraSettings, pixiReady]);
+
+  // Track if camera video is ready
+  const [cameraVideoReady, setCameraVideoReady] = useState(false);
+  const cameraInitializedRef = useRef(false);
+
+  // Connect camera video to renderer when video is ready
+  // This is called from the JSX video element's onCanPlay handler
+  const handleCameraCanPlay = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    // Guard against infinite loop - only process once
+    if (cameraInitializedRef.current) return;
+    cameraInitializedRef.current = true;
+
+    const camVideo = e.currentTarget;
+    // Store the video element directly in the ref (don't rely on React's ref timing)
+    cameraVideoRef.current = camVideo;
+
+    console.log('Camera: canplay event fired (initializing)', {
+      videoWidth: camVideo.videoWidth,
+      videoHeight: camVideo.videoHeight,
+      readyState: camVideo.readyState,
+      hasCameraRenderer: !!cameraRendererRef.current,
+    });
+    // Seek to 0 to ensure first frame is decoded
+    // Note: Don't pause here - the sync effect handles play/pause control
+    camVideo.currentTime = 0;
+    setCameraVideoReady(true);
+
+    // Directly connect to renderer if available (don't wait for effect)
+    if (cameraRendererRef.current) {
+      console.log('Camera: Directly connecting to renderer from canplay handler');
+      cameraRendererRef.current.setVideoElement(camVideo);
+    }
+  }, []);
+
+  const handleCameraError = useCallback(() => {
+    const camVideo = cameraVideoRef.current;
+    // Log detailed info for debugging - check if src is actually set
+    const srcValue = camVideo?.getAttribute('src');
+    console.error('Camera: Failed to load video', {
+      error: camVideo?.error,
+      srcAttribute: srcValue,
+      cameraVideoPath: cameraVideoPath, // from closure
+      hasValidSrc: !!srcValue && srcValue.startsWith('file://'),
+    });
+    cameraInitializedRef.current = false;
+    setCameraVideoReady(false);
+  }, [cameraVideoPath]);
+
+  // Reset camera initialization when video path changes
+  // Use useLayoutEffect to ensure this runs synchronously before canplay can fire
+  useLayoutEffect(() => {
+    cameraInitializedRef.current = false;
+    setCameraVideoReady(false);
+  }, [cameraVideoPath]);
+
+  // Connect camera to renderer when both PIXI and camera video are ready
+  useEffect(() => {
+    console.log('Camera: Connect effect running', {
+      pixiReady,
+      cameraVideoReady,
+      hasCameraRenderer: !!cameraRendererRef.current,
+      hasCameraVideoRef: !!cameraVideoRef.current,
+    });
+
+    if (!pixiReady || !cameraVideoReady || !cameraRendererRef.current || !cameraVideoRef.current) {
+      console.log('Camera: Connect effect - conditions not met, skipping');
+      return;
+    }
+
+    console.log('Camera: Connecting to renderer', {
+      videoWidth: cameraVideoRef.current.videoWidth,
+      videoHeight: cameraVideoRef.current.videoHeight,
+    });
+    cameraRendererRef.current.setVideoElement(cameraVideoRef.current);
+  }, [pixiReady, cameraVideoReady]);
+
+  // Sync camera video playback with main video
+  useEffect(() => {
+    const mainVideo = videoRef.current;
+    const camVideo = cameraVideoRef.current;
+    if (!mainVideo || !camVideo) return;
+
+    const syncCameraTime = () => {
+      if (camVideo && Math.abs(camVideo.currentTime - mainVideo.currentTime) > 0.1) {
+        camVideo.currentTime = mainVideo.currentTime;
+      }
+    };
+
+    const handleMainPlay = () => {
+      if (camVideo && camVideo.readyState >= 2) {
+        camVideo.currentTime = mainVideo.currentTime;
+        camVideo.play().catch(() => {});
+      }
+    };
+
+    const handleMainPause = () => {
+      if (camVideo) {
+        camVideo.pause();
+      }
+    };
+
+    const handleMainSeeked = () => {
+      syncCameraTime();
+    };
+
+    mainVideo.addEventListener('play', handleMainPlay);
+    mainVideo.addEventListener('pause', handleMainPause);
+    mainVideo.addEventListener('seeked', handleMainSeeked);
+
+    return () => {
+      mainVideo.removeEventListener('play', handleMainPlay);
+      mainVideo.removeEventListener('pause', handleMainPause);
+      mainVideo.removeEventListener('seeked', handleMainSeeked);
+    };
+  }, [cameraVideoPath]);
 
   // Update mouse tracking data when it changes or when video/pixi becomes ready
   useEffect(() => {
@@ -524,6 +690,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
 
       // Camera container - this will be scaled/positioned for zoom
       const cameraContainer = new PIXI.Container();
+      cameraContainer.sortableChildren = true; // Enable zIndex sorting for overlays
       cameraContainerRef.current = cameraContainer;
       app.stage.addChild(cameraContainer);
 
@@ -536,6 +703,25 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       const cursorRenderer = new CursorRenderer(cameraContainer, cursorSettings || DEFAULT_CURSOR_SETTINGS);
       cursorRendererRef.current = cursorRenderer;
 
+      // Initialize camera renderer on camera container (below cursor, above video)
+      // Start with enabled=false, will be enabled when camera video is loaded
+      const initialCameraSettings = {
+        ...(cameraSettings || DEFAULT_CAMERA_SETTINGS),
+        enabled: false, // Start hidden until camera video is loaded
+      };
+      const cameraRenderer = new CameraRenderer(cameraContainer, initialCameraSettings);
+      cameraRendererRef.current = cameraRenderer;
+
+      // Check if camera video is already ready (canplay fired before PIXI init completed)
+      // If so, connect it immediately
+      if (cameraVideoRef.current && cameraVideoRef.current.readyState >= 3) {
+        console.log('Camera: Connecting to renderer during PIXI init (video already ready)', {
+          videoWidth: cameraVideoRef.current.videoWidth,
+          videoHeight: cameraVideoRef.current.videoHeight,
+        });
+        cameraRenderer.setVideoElement(cameraVideoRef.current);
+      }
+
       setPixiReady(true);
     })();
 
@@ -545,6 +731,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
       if (cursorRendererRef.current) {
         cursorRendererRef.current.destroy();
         cursorRendererRef.current = null;
+      }
+      if (cameraRendererRef.current) {
+        cameraRendererRef.current.destroy();
+        cameraRendererRef.current = null;
+      }
+      if (cameraVideoRef.current) {
+        cameraVideoRef.current.pause();
+        // Don't remove from DOM - React handles JSX element cleanup
+        cameraVideoRef.current = null;
       }
       if (app && app.renderer) {
         app.destroy(true, { children: true, texture: true, textureSource: true });
@@ -756,8 +951,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
 
       applyTransform(motionIntensity);
 
+      // Only update cursor/camera when layout has been calculated
+      const layoutReady = stageSizeRef.current.width > 0 && stageSizeRef.current.height > 0;
+
       // Update cursor position for current video time
-      if (cursorRendererRef.current) {
+      if (cursorRendererRef.current && layoutReady) {
         // Update video layout for proper cursor positioning
         cursorRendererRef.current.setVideoLayout(
           baseScaleRef.current,
@@ -767,6 +965,41 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         cursorRendererRef.current.updateForTime(
           currentTimeRef.current // Already in milliseconds from videoEventHandlers
         );
+      }
+
+      // Update camera renderer stage size for proper positioning
+      if (cameraRendererRef.current && layoutReady) {
+        cameraRendererRef.current.setStageSize(
+          stageSizeRef.current.width,
+          stageSizeRef.current.height
+        );
+        cameraRendererRef.current.setVideoLayout(
+          baseScaleRef.current,
+          baseOffsetRef.current.x,
+          baseOffsetRef.current.y
+        );
+        // Force camera texture update every frame (needed for seeking while paused)
+        cameraRendererRef.current.updateForTime();
+
+        // Sync camera video time if needed
+        const camVideo = cameraVideoRef.current;
+        const mainVideo = videoRef.current;
+        if (camVideo && mainVideo) {
+          const currentSec = currentTimeRef.current / 1000;
+          // If drifted by more than 0.1s, sync it
+          if (Math.abs(camVideo.currentTime - currentSec) > 0.1) {
+            camVideo.currentTime = currentSec;
+          }
+          // Ensure camera playback state matches main video
+          // Only try to play if main video is actually playing (not just isPlayingRef)
+          if (!mainVideo.paused && camVideo.paused && camVideo.readyState >= 2) {
+            camVideo.play().catch(() => {});
+          }
+          // Ensure camera is paused if main video is paused
+          if (mainVideo.paused && !camVideo.paused) {
+            camVideo.pause();
+          }
+        }
       }
     };
 
@@ -896,6 +1129,19 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(({
         }}
         onError={() => onError('Failed to load video')}
       />
+      {/* Camera video element - hidden, rendered same as main video for proper file:// URL handling */}
+      {cameraVideoPath && (
+        <video
+          ref={cameraVideoRef}
+          src={cameraVideoPath}
+          className="hidden"
+          preload="auto"
+          playsInline
+          muted
+          onCanPlay={handleCameraCanPlay}
+          onError={handleCameraError}
+        />
+      )}
     </div>
   );
 });

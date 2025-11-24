@@ -17,6 +17,7 @@ import {
   clampFocusToDepth,
   DEFAULT_CROP_REGION,
   DEFAULT_CURSOR_SETTINGS,
+  DEFAULT_CAMERA_SETTINGS,
   type ZoomDepth,
   type ZoomFocus,
   type ZoomRegion,
@@ -26,6 +27,7 @@ import {
   type MouseTrackingEvent,
   type SourceBounds,
   type ExportOptions,
+  type CameraOverlaySettings,
 } from "./types";
 import { VideoExporter, type ExportProgress } from "@/lib/exporter";
 import { getTotalClipDuration, sourceTimeToOutputTime, outputTimeToSourceTime } from "./clipUtils";
@@ -57,6 +59,8 @@ export default function VideoEditor() {
   const [mouseTrackingData, setMouseTrackingData] = useState<MouseTrackingEvent[]>([]);
   const [sourceBounds, setSourceBounds] = useState<SourceBounds | null>(null);
   const [initialMousePosition, setInitialMousePosition] = useState<{ x: number; y: number } | null>(null);
+  const [cameraVideoPath, setCameraVideoPath] = useState<string | null>(null);
+  const [cameraSettings, setCameraSettings] = useState<CameraOverlaySettings>(DEFAULT_CAMERA_SETTINGS);
 
   const videoPlaybackRef = useRef<VideoPlaybackRef>(null);
   const nextZoomIdRef = useRef(1);
@@ -69,6 +73,12 @@ export default function VideoEditor() {
         const result = await window.electronAPI.getRecordedVideoPath();
         if (result.success && result.path) {
           setVideoPath(`file://${result.path}`);
+
+          // Load camera video if available
+          if (result.cameraPath) {
+            setCameraVideoPath(`file://${result.cameraPath}`);
+            console.log('Loaded camera video:', result.cameraPath);
+          }
         } else {
           setError(result.message || 'Failed to load video');
         }
@@ -574,6 +584,7 @@ export default function VideoEditor() {
                     <VideoPlayback
                       ref={videoPlaybackRef}
                       videoPath={videoPath || ''}
+                      cameraVideoPath={cameraVideoPath}
                       onDurationChange={handleDurationChange}
                       onTimeUpdate={setCurrentTime}
                       onPlayStateChange={setIsPlaying}
@@ -592,6 +603,7 @@ export default function VideoEditor() {
                       sourceBounds={sourceBounds}
                       initialMousePosition={initialMousePosition}
                       clipRegions={clipRegions}
+                      cameraSettings={cameraSettings}
                     />
                   </div>
                 </div>
@@ -651,6 +663,9 @@ export default function VideoEditor() {
           onCursorSettingsChange={setCursorSettings}
           videoElement={videoPlaybackRef.current?.video || null}
           onExport={handleOpenExportOptions}
+          cameraSettings={cameraSettings}
+          onCameraSettingsChange={setCameraSettings}
+          hasCameraRecording={!!cameraVideoPath}
         />
       </div>
 

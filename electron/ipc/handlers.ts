@@ -131,7 +131,7 @@ export function registerIpcHandlers(
     try {
       const videoPath = path.join(RECORDINGS_DIR, fileName)
       await fs.writeFile(videoPath, Buffer.from(videoData))
-      
+
       return {
         success: true,
         path: videoPath,
@@ -142,6 +142,26 @@ export function registerIpcHandlers(
       return {
         success: false,
         message: 'Failed to store video',
+        error: String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('store-camera-video', async (_, videoData: ArrayBuffer, fileName: string) => {
+    try {
+      const videoPath = path.join(RECORDINGS_DIR, fileName)
+      await fs.writeFile(videoPath, Buffer.from(videoData))
+
+      return {
+        success: true,
+        path: videoPath,
+        message: 'Camera video stored successfully'
+      }
+    } catch (error) {
+      console.error('Failed to store camera video:', error)
+      return {
+        success: false,
+        message: 'Failed to store camera video',
         error: String(error)
       }
     }
@@ -178,7 +198,8 @@ export function registerIpcHandlers(
   ipcMain.handle('get-recorded-video-path', async () => {
     try {
       const files = await fs.readdir(RECORDINGS_DIR)
-      const videoFiles = files.filter(file => file.endsWith('.webm'))
+      // Filter to screen videos only (exclude camera videos which end with _camera.webm)
+      const videoFiles = files.filter(file => file.endsWith('.webm') && !file.includes('_camera'))
 
       if (videoFiles.length === 0) {
         return { success: false, message: 'No recorded video found' }
@@ -187,7 +208,23 @@ export function registerIpcHandlers(
       const latestVideo = videoFiles.sort().reverse()[0]
       const videoPath = path.join(RECORDINGS_DIR, latestVideo)
 
-      return { success: true, path: videoPath }
+      // Check if there's a matching camera video
+      // Extract timestamp from filename: recording-{timestamp}.webm
+      const match = latestVideo.match(/recording-(\d+)\.webm/)
+      let cameraPath: string | null = null
+      if (match) {
+        const timestamp = match[1]
+        const cameraFileName = `recording-${timestamp}_camera.webm`
+        const potentialCameraPath = path.join(RECORDINGS_DIR, cameraFileName)
+        try {
+          await fs.access(potentialCameraPath)
+          cameraPath = potentialCameraPath
+        } catch {
+          // Camera file doesn't exist
+        }
+      }
+
+      return { success: true, path: videoPath, cameraPath }
     } catch (error) {
       console.error('Failed to get video path:', error)
       return { success: false, message: 'Failed to get video path', error: String(error) }

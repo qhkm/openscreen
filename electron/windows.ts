@@ -9,16 +9,18 @@ const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 const RENDERER_DIST = path.join(APP_ROOT, 'dist')
 
 export function createHudOverlayWindow(): BrowserWindow {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
   const win = new BrowserWindow({
-    width: 250,
-    height: 80,
-    minWidth: 250,
-    maxWidth: 250,
-    minHeight: 80,
-    maxHeight: 80,
+    width: 700,
+    height: 480,
+    minWidth: 600,
+    minHeight: 400,
+    x: Math.round((width - 700) / 2),
+    y: Math.round((height - 480) / 2),
     frame: false,
     transparent: true,
-    resizable: false,
+    resizable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
@@ -88,7 +90,7 @@ export function createEditorWindow(): BrowserWindow {
 
 export function createSourceSelectorWindow(): BrowserWindow {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
-  
+
   const win = new BrowserWindow({
     width: 620,
     height: 420,
@@ -111,8 +113,56 @@ export function createSourceSelectorWindow(): BrowserWindow {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL + '?windowType=source-selector')
   } else {
-    win.loadFile(path.join(RENDERER_DIST, 'index.html'), { 
-      query: { windowType: 'source-selector' } 
+    win.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { windowType: 'source-selector' }
+    })
+  }
+
+  return win
+}
+
+export function createCameraPreviewWindow(deviceId: string): BrowserWindow {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+  const size = 160
+
+  const win = new BrowserWindow({
+    width: size,
+    height: size,
+    x: width - size - 40,
+    y: height - size - 40,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    roundedCorners: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.mjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  // Make window draggable by entire content
+  win.setMovable(true)
+
+  // Inject transparent background CSS before page loads
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.insertCSS(`
+      html, body, #root {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+    `)
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL + `?windowType=camera-preview&deviceId=${encodeURIComponent(deviceId)}`)
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { windowType: 'camera-preview', deviceId }
     })
   }
 

@@ -11,11 +11,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
   const [recording, setRecording] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const cameraRecorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const micStream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const cameraChunks = useRef<Blob[]>([]);
   const startTime = useRef<number>(0);
+  const recordingTimestamp = useRef<number>(0);
 
   const stopRecording = useRef(() => {
     if (mediaRecorder.current?.state === "recording") {
@@ -29,6 +32,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       if (micStream.current) {
         micStream.current.getTracks().forEach(track => track.stop());
         micStream.current = null;
+      }
+      // Stop camera recorder first (if exists)
+      if (cameraRecorder.current?.state === "recording") {
+        cameraRecorder.current.stop();
       }
       mediaRecorder.current.stop();
       setRecording(false);
@@ -49,6 +56,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
     return () => {
       if (cleanup) cleanup();
 
+      if (cameraRecorder.current?.state === "recording") {
+        cameraRecorder.current.stop();
+      }
       if (mediaRecorder.current?.state === "recording") {
         mediaRecorder.current.stop();
       }
@@ -75,6 +85,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         alert("Please select a source to record");
         setInitializing(false);
         return;
+      }
+
+      // Hide the camera preview window first to release the camera stream
+      // This ensures the recorder can get exclusive access to the camera
+      if (selectedSource.cameraId) {
+        await window.electronAPI.hideCameraPreview();
+        // Small delay to ensure camera is released
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
       // Get screen capture stream
       const screenStream = await (navigator.mediaDevices as any).getUserMedia({
@@ -118,7 +136,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         }
       }
 
-      // Get camera stream if selected (stored separately for potential picture-in-picture)
+      // Get camera stream if selected (recorded separately for picture-in-picture overlay)
       if (selectedSource.cameraId) {
         try {
           const cameraStreamResult = await navigator.mediaDevices.getUserMedia({
@@ -126,9 +144,41 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
             video: { deviceId: { exact: selectedSource.cameraId } },
           });
           cameraStream.current = cameraStreamResult;
-          // Note: Camera track is stored but not combined into main recording
-          // This allows for future picture-in-picture implementation
-          console.log('Camera stream ready:', selectedSource.cameraId);
+
+          // Create separate MediaRecorder for camera stream
+          cameraChunks.current = [];
+          const cameraMimeType = "video/webm;codecs=vp9";
+          const camRecorder = new MediaRecorder(cameraStreamResult, {
+            mimeType: cameraMimeType,
+            videoBitsPerSecond: 8_000_000 // 8 Mbps for camera (lower than screen)
+          });
+          cameraRecorder.current = camRecorder;
+
+          camRecorder.ondataavailable = e => {
+            if (e.data && e.data.size > 0) cameraChunks.current.push(e.data);
+          };
+
+          // Camera onstop saves the camera video
+          camRecorder.onstop = async () => {
+            if (cameraChunks.current.length === 0) return;
+            const duration = Date.now() - startTime.current;
+            const cameraBuggyBlob = new Blob(cameraChunks.current, { type: cameraMimeType });
+            const cameraFileName = `recording-${recordingTimestamp.current}_camera.webm`;
+            try {
+              const cameraBlob = await fixWebmDuration(cameraBuggyBlob, duration);
+              const arrayBuffer = await cameraBlob.arrayBuffer();
+              const result = await window.electronAPI.storeCameraVideo(arrayBuffer, cameraFileName);
+              if (!result.success) {
+                console.error('Failed to store camera video:', result.message);
+              } else {
+                console.log('Camera video stored:', cameraFileName);
+              }
+            } catch (error) {
+              console.error('Error saving camera video:', error);
+            }
+          };
+
+          console.log('Camera recorder ready:', selectedSource.cameraId);
         } catch (err) {
           console.warn('Failed to get camera:', err);
         }
@@ -227,9 +277,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
         if (chunks.current.length === 0) return;
         const duration = Date.now() - startTime.current;
         const buggyBlob = new Blob(chunks.current, { type: mimeType });
-        const timestamp = Date.now();
-        const videoFileName = `recording-${timestamp}.webm`;
-        const trackingFileName = `recording-${timestamp}_tracking.json`;
+        // Use the shared timestamp set at recording start for consistent naming
+        const videoFileName = `recording-${recordingTimestamp.current}.webm`;
+        const trackingFileName = `recording-${recordingTimestamp.current}_tracking.json`;
         try {
           const videoBlob = await fixWebmDuration(buggyBlob, duration);
           const arrayBuffer = await videoBlob.arrayBuffer();
@@ -250,8 +300,18 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
       recorder.onerror = () => setRecording(false);
       // Start mouse tracking right before video recording to sync timestamps
       await window.electronAPI.startMouseTracking();
+
+      // Set shared timestamp for consistent file naming across screen, camera, and tracking
+      recordingTimestamp.current = Date.now();
+      startTime.current = recordingTimestamp.current;
+
+      // Start both recorders simultaneously
       recorder.start(1000);
-      startTime.current = Date.now();
+      if (cameraRecorder.current) {
+        cameraRecorder.current.start(1000);
+        console.log('Camera recording started');
+      }
+
       setInitializing(false);
       setRecording(true);
       window.electronAPI?.setRecordingState(true);

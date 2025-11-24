@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "../ui/button";
-import { MdCheck } from "react-icons/md";
 import { Card } from "../ui/card";
+import { MdCheck } from "react-icons/md";
+import { BsRecordCircle } from "react-icons/bs";
+import { FaRegStopCircle } from "react-icons/fa";
 import styles from "./SourceSelector.module.css";
 import {
   Monitor,
@@ -15,8 +17,10 @@ import {
   Volume2,
   VolumeX,
   Settings,
-  X
+  X,
+  Loader2
 } from "lucide-react";
+import { useScreenRecorder } from "../../hooks/useScreenRecorder";
 
 interface DesktopSource {
   id: string;
@@ -34,7 +38,9 @@ interface MediaDevice {
 
 type SourceType = 'display' | 'window' | 'area' | 'device';
 
-export function SourceSelector() {
+export function RecordingPanel() {
+  const { recording, initializing, toggleRecording } = useScreenRecorder();
+
   const [sources, setSources] = useState<DesktopSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,18 +75,25 @@ export function SourceSelector() {
         if (rawSources.length === 0) {
           setPermissionError(true);
         }
-        setSources(
-          rawSources.map(source => ({
-            id: source.id,
-            name:
-              source.id.startsWith('window:') && source.name.includes(' — ')
-                ? source.name.split(' — ')[1] || source.name
-                : source.name,
-            thumbnail: source.thumbnail,
-            display_id: source.display_id,
-            appIcon: source.appIcon
-          }))
-        );
+        const mappedSources = rawSources.map(source => ({
+          id: source.id,
+          name:
+            source.id.startsWith('window:') && source.name.includes(' — ')
+              ? source.name.split(' — ')[1] || source.name
+              : source.name,
+          thumbnail: source.thumbnail,
+          display_id: source.display_id,
+          appIcon: source.appIcon
+        }));
+        setSources(mappedSources);
+
+        // Auto-select first display if none selected
+        if (!selectedSource) {
+          const firstDisplay = mappedSources.find(s => s.id.startsWith('screen:'));
+          if (firstDisplay) {
+            setSelectedSource(firstDisplay);
+          }
+        }
       } catch (error) {
         console.error('Error loading sources:', error);
         setPermissionError(true);
@@ -91,13 +104,10 @@ export function SourceSelector() {
     fetchSources();
   }, []);
 
-  // Fetch media devices (cameras and microphones)
-  // Don't request any permissions on load - avoids triggering camera/mic indicators
+  // Fetch media devices
   useEffect(() => {
     async function fetchMediaDevices() {
       try {
-        // Just enumerate devices without requesting permissions
-        // Labels will be empty if permission not granted, but we show generic names as fallback
         const devices = await navigator.mediaDevices.enumerateDevices();
 
         const videoDevices = devices
@@ -131,6 +141,27 @@ export function SourceSelector() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Handle camera selection
+  const handleCameraSelect = (deviceId: string | null) => {
+    setSelectedCamera(deviceId);
+    setCameraDropdownOpen(false);
+
+    if (deviceId) {
+      // Show floating camera preview window
+      window.electronAPI.showCameraPreview(deviceId);
+    } else {
+      // Hide floating camera preview window
+      window.electronAPI.hideCameraPreview();
+    }
+  };
+
+  // Cleanup on unmount - hide camera preview window
+  useEffect(() => {
+    return () => {
+      window.electronAPI.hideCameraPreview();
+    };
+  }, []);
+
   const screenSources = sources.filter(s => s.id.startsWith('screen:'));
   const windowSources = sources.filter(s => s.id.startsWith('window:'));
 
@@ -140,16 +171,19 @@ export function SourceSelector() {
 
   const handleSourceSelect = (source: DesktopSource) => setSelectedSource(source);
 
-  const handleShare = async () => {
-    if (selectedSource) {
-      // Pass along media device selections
-      await window.electronAPI.selectSource({
-        ...selectedSource,
-        cameraId: selectedCamera,
-        microphoneId: selectedMic,
-        systemAudio: systemAudioEnabled
-      });
-    }
+  const handleRecord = async () => {
+    if (!selectedSource) return;
+
+    // Save the source selection first
+    await window.electronAPI.selectSource({
+      ...selectedSource,
+      cameraId: selectedCamera,
+      microphoneId: selectedMic,
+      systemAudio: systemAudioEnabled
+    });
+
+    // Then toggle recording
+    toggleRecording();
   };
 
   const handleOpenSettings = async () => {
@@ -180,24 +214,12 @@ export function SourceSelector() {
           <p className="text-sm text-zinc-400 mb-4">
             OpenScreen needs permission to record your screen. Please enable Screen Recording for Electron in System Settings.
           </p>
-          <div className="space-y-2">
-            <Button
-              onClick={handleOpenSettings}
-              className="w-full bg-[#34B27B] text-white hover:bg-[#34B27B]/80"
-            >
-              Open System Settings
-            </Button>
-            <p className="text-xs text-zinc-500">
-              After enabling, restart the app for changes to take effect.
-            </p>
-          </div>
-        </div>
-        <div className="border-t border-zinc-800 p-2 w-full max-w-xl mt-6">
-          <div className="flex justify-center">
-            <Button variant="outline" onClick={() => window.close()} className="px-4 py-1 text-xs bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700">
-              Close
-            </Button>
-          </div>
+          <Button
+            onClick={handleOpenSettings}
+            className="w-full bg-[#34B27B] text-white hover:bg-[#34B27B]/80"
+          >
+            Open System Settings
+          </Button>
         </div>
       </div>
     );
@@ -222,32 +244,32 @@ export function SourceSelector() {
 
           {/* Source Type Buttons */}
           <div className={`flex items-center bg-zinc-800/50 rounded-lg p-1 gap-1 ${styles.electronNoDrag}`}>
-          <SourceTypeButton
-            icon={<Monitor size={16} />}
-            label="Display"
-            active={sourceType === 'display'}
-            onClick={() => setSourceType('display')}
-          />
-          <SourceTypeButton
-            icon={<AppWindow size={16} />}
-            label="Window"
-            active={sourceType === 'window'}
-            onClick={() => setSourceType('window')}
-          />
-          <SourceTypeButton
-            icon={<Square size={16} />}
-            label="Area"
-            active={sourceType === 'area'}
-            onClick={() => setSourceType('area')}
-            disabled
-          />
-          <SourceTypeButton
-            icon={<Smartphone size={16} />}
-            label="Device"
-            active={sourceType === 'device'}
-            onClick={() => setSourceType('device')}
-            disabled
-          />
+            <SourceTypeButton
+              icon={<Monitor size={16} />}
+              label="Display"
+              active={sourceType === 'display'}
+              onClick={() => setSourceType('display')}
+            />
+            <SourceTypeButton
+              icon={<AppWindow size={16} />}
+              label="Window"
+              active={sourceType === 'window'}
+              onClick={() => setSourceType('window')}
+            />
+            <SourceTypeButton
+              icon={<Square size={16} />}
+              label="Area"
+              active={sourceType === 'area'}
+              onClick={() => setSourceType('area')}
+              disabled
+            />
+            <SourceTypeButton
+              icon={<Smartphone size={16} />}
+              label="Device"
+              active={sourceType === 'device'}
+              onClick={() => setSourceType('device')}
+              disabled
+            />
           </div>
         </div>
 
@@ -281,7 +303,7 @@ export function SourceSelector() {
                     icon={<VideoOff size={14} />}
                     label="No camera"
                     selected={!selectedCamera}
-                    onClick={() => { setSelectedCamera(null); setCameraDropdownOpen(false); }}
+                    onClick={() => handleCameraSelect(null)}
                   />
                   {cameras.map(cam => (
                     <DropdownItem
@@ -289,7 +311,7 @@ export function SourceSelector() {
                       icon={<Video size={14} />}
                       label={cam.label}
                       selected={selectedCamera === cam.deviceId}
-                      onClick={() => { setSelectedCamera(cam.deviceId); setCameraDropdownOpen(false); }}
+                      onClick={() => handleCameraSelect(cam.deviceId)}
                     />
                   ))}
                 </div>
@@ -356,56 +378,60 @@ export function SourceSelector() {
         </div>
       </div>
 
-      {/* Source Grid */}
-      <div className={`flex-1 overflow-y-auto p-4 ${styles.electronNoDrag}`}>
-        {sourceType === 'area' ? (
-          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-            <Square size={48} className="mb-3 opacity-50" />
-            <p className="text-sm">Area selection coming soon</p>
-          </div>
-        ) : sourceType === 'device' ? (
-          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-            <Smartphone size={48} className="mb-3 opacity-50" />
-            <p className="text-sm">Device mirroring coming soon</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {displayedSources.map(source => (
-              <Card
-                key={source.id}
-                className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer overflow-hidden`}
-                onClick={() => handleSourceSelect(source)}
-              >
-                <div className="p-2">
-                  <div className="relative mb-2">
-                    <img
-                      src={source.thumbnail || ''}
-                      alt={source.name}
-                      className="w-full aspect-video object-cover rounded-lg border border-zinc-800"
-                    />
-                    {selectedSource?.id === source.id && (
-                      <div className="absolute -top-1 -right-1">
-                        <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
-                          <MdCheck className="w-3 h-3 text-white" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {source.appIcon && sourceType === 'window' && (
+      {/* Main Content Area */}
+      <div className={`flex-1 overflow-hidden flex ${styles.electronNoDrag}`}>
+        {/* Source Grid */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {sourceType === 'area' ? (
+            <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+              <Square size={48} className="mb-3 opacity-50" />
+              <p className="text-sm">Area selection coming soon</p>
+            </div>
+          ) : sourceType === 'device' ? (
+            <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+              <Smartphone size={48} className="mb-3 opacity-50" />
+              <p className="text-sm">Device mirroring coming soon</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {displayedSources.map(source => (
+                <Card
+                  key={source.id}
+                  className={`${styles.sourceCard} ${selectedSource?.id === source.id ? styles.selected : ''} cursor-pointer overflow-hidden`}
+                  onClick={() => handleSourceSelect(source)}
+                >
+                  <div className="p-2">
+                    <div className="relative mb-2">
                       <img
-                        src={source.appIcon}
-                        alt=""
-                        className="w-4 h-4 flex-shrink-0"
+                        src={source.thumbnail || ''}
+                        alt={source.name}
+                        className="w-full aspect-video object-cover rounded-lg border border-zinc-800"
                       />
-                    )}
-                    <span className="text-xs text-zinc-300 truncate">{source.name}</span>
+                      {selectedSource?.id === source.id && (
+                        <div className="absolute -top-1 -right-1">
+                          <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
+                            <MdCheck className="w-3 h-3 text-white" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {source.appIcon && sourceType === 'window' && (
+                        <img
+                          src={source.appIcon}
+                          alt=""
+                          className="w-4 h-4 flex-shrink-0"
+                        />
+                      )}
+                      <span className="text-xs text-zinc-300 truncate">{source.name}</span>
+                    </div>
                   </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* Bottom Action Bar */}
@@ -427,11 +453,30 @@ export function SourceSelector() {
               Cancel
             </Button>
             <Button
-              onClick={handleShare}
-              disabled={!selectedSource}
-              className="px-4 py-1.5 text-xs bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:bg-zinc-700"
+              onClick={handleRecord}
+              disabled={!selectedSource || initializing}
+              className={`px-6 py-1.5 text-xs text-white disabled:opacity-50 ${
+                recording
+                  ? 'bg-red-600 hover:bg-red-500'
+                  : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
             >
-              Select
+              {initializing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin mr-1" />
+                  Starting...
+                </>
+              ) : recording ? (
+                <>
+                  <FaRegStopCircle size={14} className="mr-1" />
+                  Stop
+                </>
+              ) : (
+                <>
+                  <BsRecordCircle size={14} className="mr-1" />
+                  Record
+                </>
+              )}
             </Button>
           </div>
         </div>

@@ -94,35 +94,37 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
   }
 
   const handlePlay = () => {
-    if (isSeekingRef.current) {
-      video.pause();
-      return;
-    }
-
+    // Don't block play if seeking - the browser handles this correctly
+    // and will play from the seeked position once seek completes
     if (!allowPlaybackRef.current) {
       video.pause();
       return;
     }
 
-    // Before starting playback, check if current position is valid (inside a clip)
-    const clips = clipRegionsRef.current;
-    if (clips.length > 0) {
-      const currentMs = video.currentTime * 1000;
-      const currentClip = findClipAtSourceTime(currentMs, clips);
+    // IMPORTANT: Only validate position if user initiated play (not during manual seeking)
+    // Allow the user to scrub to any position without auto-jumping
+    // The updateTime loop will handle gap skipping during playback
+    if (!isSeekingRef.current) {
+      // Before starting playback, check if current position is valid (inside a clip)
+      const clips = clipRegionsRef.current;
+      if (clips.length > 0) {
+        const currentMs = video.currentTime * 1000;
+        const currentClip = findClipAtSourceTime(currentMs, clips);
 
-      if (!currentClip) {
-        // Current position is outside any clip - seek to valid position
-        const nextClipStart = getNextClipStart(currentMs, clips);
-        if (nextClipStart !== null) {
-          // Seek to next clip start
-          video.currentTime = nextClipStart / 1000;
-          emitTime(video.currentTime);
-        } else {
-          // No clips ahead - seek to first clip start
-          const sorted = sortClips(clips);
-          if (sorted.length > 0) {
-            video.currentTime = sorted[0].startMs / 1000;
+        if (!currentClip) {
+          // Current position is outside any clip - seek to valid position
+          const nextClipStart = getNextClipStart(currentMs, clips);
+          if (nextClipStart !== null) {
+            // Seek to next clip start
+            video.currentTime = nextClipStart / 1000;
             emitTime(video.currentTime);
+          } else {
+            // No clips ahead - seek to first clip start
+            const sorted = sortClips(clips);
+            if (sorted.length > 0) {
+              video.currentTime = sorted[0].startMs / 1000;
+              emitTime(video.currentTime);
+            }
           }
         }
       }

@@ -45,8 +45,9 @@ interface Window {
       error?: string
     }>
     storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
+    storeCameraVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
     storeMouseTrackingData: (fileName: string) => Promise<{ success: boolean; path?: string; eventCount?: number; message?: string }>
-    getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>
+    getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; cameraPath?: string | null; message?: string }>
     getMouseTrackingData: () => Promise<{
       success: boolean
       data: Array<{
@@ -66,6 +67,8 @@ interface Window {
     onStopRecordingFromTray: (callback: () => void) => () => void
     openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
     saveExportedVideo: (videoData: ArrayBuffer, fileName: string) => Promise<{ success: boolean; path?: string; message?: string }>
+    showCameraPreview: (deviceId: string) => Promise<{ success: boolean }>
+    hideCameraPreview: () => Promise<{ success: boolean }>
   }
 }
 

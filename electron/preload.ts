@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeRecordedVideo: (videoData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('store-recorded-video', videoData, fileName)
   },
+  storeCameraVideo: (videoData: ArrayBuffer, fileName: string) => {
+    return ipcRenderer.invoke('store-camera-video', videoData, fileName)
+  },
   storeMouseTrackingData: (fileName: string) => {
     return ipcRenderer.invoke('store-mouse-tracking-data', fileName)
   },
@@ -60,5 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   saveExportedVideo: (videoData: ArrayBuffer, fileName: string) => {
     return ipcRenderer.invoke('save-exported-video', videoData, fileName)
+  },
+  showCameraPreview: (deviceId: string) => {
+    return ipcRenderer.invoke('show-camera-preview', deviceId)
+  },
+  hideCameraPreview: () => {
+    return ipcRenderer.invoke('hide-camera-preview')
   },
 })

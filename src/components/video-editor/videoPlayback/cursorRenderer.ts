@@ -336,16 +336,6 @@ export class CursorRenderer {
       const videoX = position.x * scale + offsetX;
       const videoY = position.y * scale + offsetY;
 
-      // Debug logging (remove later)
-      if (Math.random() < 0.01) { // Log 1% of updates to avoid spam
-        console.log('Cursor update:', {
-          time: currentTimeMs,
-          rawPosition: position,
-          layout: this.videoLayout,
-          finalPosition: { videoX, videoY },
-        });
-      }
-
       this.updatePosition(videoX, videoY);
 
       // Check for click events near current time (using adjusted time)

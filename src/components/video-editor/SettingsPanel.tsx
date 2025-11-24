@@ -12,16 +12,19 @@ import {
   MousePointer2,
   ZoomIn,
   Zap,
-  Monitor,
   Palette,
   Image as ImageIcon,
   Layers,
   LayoutTemplate,
-  Trash2
+  Trash2,
+  Monitor,
+  Camera,
+  Circle,
+  RectangleHorizontal
 } from "lucide-react";
 import { toast } from "sonner";
-import type { ZoomDepth, CropRegion, CursorSettings } from "./types";
-import { CURSOR_STYLE_OPTIONS, CLICK_EFFECT_OPTIONS } from "./types";
+import type { ZoomDepth, CropRegion, CursorSettings, CameraOverlaySettings} from "./types";
+import { CURSOR_STYLE_OPTIONS, CLICK_EFFECT_OPTIONS, CAMERA_SHAPE_OPTIONS } from "./types";
 import { CropControl } from "./CropControl";
 
 const WALLPAPER_COUNT = 23;
@@ -70,6 +73,9 @@ interface SettingsPanelProps {
   onExport?: () => void;
   cursorSettings?: CursorSettings;
   onCursorSettingsChange?: (settings: CursorSettings) => void;
+  cameraSettings?: CameraOverlaySettings;
+  onCameraSettingsChange?: (settings: CameraOverlaySettings) => void;
+  hasCameraRecording?: boolean;
 }
 
 export default SettingsPanel;
@@ -200,7 +206,10 @@ export function SettingsPanel({
   videoElement,
   onExport,
   cursorSettings,
-  onCursorSettingsChange
+  onCursorSettingsChange,
+  cameraSettings,
+  onCameraSettingsChange,
+  hasCameraRecording
 }: SettingsPanelProps) {
   const [wallpaperPaths, setWallpaperPaths] = useState<string[]>([]);
   const [customImages, setCustomImages] = useState<string[]>([]);
@@ -209,7 +218,7 @@ export function SettingsPanel({
   const [gradient, setGradient] = useState<string>(GRADIENTS[0]);
   const [showCropDropdown, setShowCropDropdown] = useState(false);
   const [bgMode, setBgMode] = useState<'image' | 'color' | 'gradient'>('image');
-  const [activeTab, setActiveTab] = useState<'canvas' | 'cursor'>('canvas');
+  const [activeTab, setActiveTab] = useState<'canvas' | 'cursor' | 'camera'>('canvas');
 
   useEffect(() => {
     let mounted = true;
@@ -303,7 +312,7 @@ export function SettingsPanel({
       </div>
 
       {/* Tab Navigation */}
-      <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 bg-zinc-900/30 p-2">
+      <div className="grid grid-cols-3 gap-1 border-b border-zinc-800 bg-zinc-900/30 p-2">
         <TabButton
           active={activeTab === 'canvas'}
           onClick={() => setActiveTab('canvas')}
@@ -315,6 +324,12 @@ export function SettingsPanel({
           onClick={() => setActiveTab('cursor')}
           label="Cursor"
           icon={<MousePointer2 size={14} />}
+        />
+        <TabButton
+          active={activeTab === 'camera'}
+          onClick={() => setActiveTab('camera')}
+          label="Camera"
+          icon={<Camera size={14} />}
         />
       </div>
 
@@ -595,6 +610,104 @@ export function SettingsPanel({
             <MousePointer2 size={32} className="mb-3 text-zinc-700" />
             <p className="text-xs text-zinc-500">Cursor settings not available</p>
             <p className="mt-1 text-[10px] text-zinc-600">Record a video to enable cursor overlay</p>
+          </div>
+        )}
+
+        {/* --- CAMERA TAB CONTENT --- */}
+        {activeTab === 'camera' && cameraSettings && onCameraSettingsChange && hasCameraRecording && (
+          <div className="space-y-8">
+
+            {/* Section: Camera Shape */}
+            <section>
+              <label className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <Camera size={12} /> Camera Shape
+              </label>
+
+              <div className="grid grid-cols-3 gap-3">
+                {CAMERA_SHAPE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => onCameraSettingsChange({ ...cameraSettings, shape: option.value })}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-2 rounded-lg border p-4 text-xs font-medium transition-all active:scale-95",
+                      cameraSettings.shape === option.value
+                        ? "border-emerald-600/50 bg-emerald-900/20 text-emerald-400 shadow-sm"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-200"
+                    )}
+                  >
+                    {option.value === 'circle' && <Circle size={24} />}
+                    {option.value === 'squircle' && (
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2C17.5 2 22 6.5 22 12C22 17.5 17.5 22 12 22C6.5 22 2 17.5 2 12C2 6.5 6.5 2 12 2Z" strokeLinecap="round" />
+                      </svg>
+                    )}
+                    {option.value === 'rounded-rect' && <RectangleHorizontal size={24} />}
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Section: Visibility Toggle */}
+            <section>
+              <ToggleItem
+                label="Show Camera Overlay"
+                active={cameraSettings.enabled}
+                onClick={() => onCameraSettingsChange({ ...cameraSettings, enabled: !cameraSettings.enabled })}
+              />
+              <ToggleItem
+                label="Mirror Camera"
+                active={cameraSettings.mirror}
+                onClick={() => onCameraSettingsChange({ ...cameraSettings, mirror: !cameraSettings.mirror })}
+              />
+              <ToggleItem
+                label="Show Shadow"
+                active={cameraSettings.showShadow}
+                onClick={() => onCameraSettingsChange({ ...cameraSettings, showShadow: !cameraSettings.showShadow })}
+              />
+            </section>
+
+            {/* Section: Size */}
+            <section>
+              <label className="mb-3 flex items-center justify-between text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <span>Size</span>
+                <span className="text-emerald-400">{Math.round(cameraSettings.size * 100)}%</span>
+              </label>
+              <input
+                type="range"
+                min="10"
+                max="40"
+                value={cameraSettings.size * 100}
+                onChange={(e) => onCameraSettingsChange({ ...cameraSettings, size: Number(e.target.value) / 100 })}
+                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+            </section>
+
+            {/* Section: Brightness */}
+            <section>
+              <label className="mb-3 flex items-center justify-between text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <span>Brightness</span>
+                <span className="text-emerald-400">{Math.round((cameraSettings.brightness ?? 1) * 100)}%</span>
+              </label>
+              <input
+                type="range"
+                min="50"
+                max="200"
+                value={(cameraSettings.brightness ?? 1) * 100}
+                onChange={(e) => onCameraSettingsChange({ ...cameraSettings, brightness: Number(e.target.value) / 100 })}
+                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+              />
+            </section>
+
+          </div>
+        )}
+
+        {/* Fallback if no camera recording */}
+        {activeTab === 'camera' && !hasCameraRecording && (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <Camera size={32} className="mb-3 text-zinc-700" />
+            <p className="text-xs text-zinc-500">No camera recording available</p>
+            <p className="mt-1 text-[10px] text-zinc-600">Record with camera enabled to add overlay</p>
           </div>
         )}
 

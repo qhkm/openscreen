@@ -100,6 +100,56 @@ export const CLICK_EFFECT_OPTIONS: Array<{ value: ClickEffect; label: string }> 
   { value: 'ring', label: 'Ring' },
 ];
 
+// =====================================
+// Camera Overlay Types
+// =====================================
+
+export type CameraShape = 'circle' | 'squircle' | 'rounded-rect';
+export type CameraPosition = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'custom';
+
+export interface CameraOverlaySettings {
+  enabled: boolean;
+  shape: CameraShape;
+  position: CameraPosition;
+  customX: number; // 0-1 normalized (used when position is 'custom')
+  customY: number; // 0-1 normalized
+  size: number; // 0.1-0.5 of video width
+  borderRadius: number; // For rounded-rect (0-50)
+  borderWidth: number;
+  borderColor: string;
+  showShadow: boolean;
+  mirror: boolean; // Flip horizontally
+  brightness: number; // 0.5-2.0, 1.0 = normal
+}
+
+export const DEFAULT_CAMERA_SETTINGS: CameraOverlaySettings = {
+  enabled: true,
+  shape: 'squircle',
+  position: 'bottom-right',
+  customX: 0.85,
+  customY: 0.85,
+  size: 0.2,
+  borderRadius: 16,
+  borderWidth: 3,
+  borderColor: '#FFFFFF',
+  showShadow: true,
+  mirror: true, // Mirror by default (more natural for speaker)
+  brightness: 1.0, // Normal brightness
+};
+
+export const CAMERA_SHAPE_OPTIONS: Array<{ value: CameraShape; label: string }> = [
+  { value: 'circle', label: 'Circle' },
+  { value: 'squircle', label: 'Squircle' },
+  { value: 'rounded-rect', label: 'Rounded' },
+];
+
+export const CAMERA_POSITION_OPTIONS: Array<{ value: CameraPosition; label: string }> = [
+  { value: 'bottom-right', label: 'Bottom Right' },
+  { value: 'bottom-left', label: 'Bottom Left' },
+  { value: 'top-right', label: 'Top Right' },
+  { value: 'top-left', label: 'Top Left' },
+];
+
 // Mouse tracking event from recording
 export interface MouseTrackingEvent {
   type: 'move' | 'down' | 'up' | 'click';

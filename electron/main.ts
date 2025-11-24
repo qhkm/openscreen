@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
+import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow, createCameraPreviewWindow } from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupMouseTracking } from './ipc/mouseTracking'
 
@@ -16,11 +16,11 @@ async function cleanupOldRecordings() {
     const files = await fs.readdir(RECORDINGS_DIR)
     const now = Date.now()
     const maxAge = 1 * 24 * 60 * 60 * 1000
-    
+
     for (const file of files) {
       const filePath = path.join(RECORDINGS_DIR, file)
       const stats = await fs.stat(filePath)
-      
+
       if (now - stats.mtimeMs > maxAge) {
         await fs.unlink(filePath)
         console.log(`Deleted old recording: ${file}`)
@@ -61,11 +61,20 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 // Window references
 let mainWindow: BrowserWindow | null = null
 let sourceSelectorWindow: BrowserWindow | null = null
+let cameraPreviewWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let selectedSourceName = ''
 
 function createWindow() {
   mainWindow = createHudOverlayWindow()
+
+  // Close camera preview when main window is closed
+  mainWindow.on('closed', () => {
+    if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+      cameraPreviewWindow.close()
+      cameraPreviewWindow = null
+    }
+  })
 }
 
 function createTray() {
@@ -94,6 +103,12 @@ function updateTrayMenu() {
 }
 
 function createEditorWindowWrapper() {
+  // Close camera preview when switching to editor
+  if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+    cameraPreviewWindow.close()
+    cameraPreviewWindow = null
+  }
+
   if (mainWindow) {
     mainWindow.close()
     mainWindow = null
@@ -135,7 +150,27 @@ app.on('before-quit', async (event) => {
 app.whenReady().then(async () => {
   // Ensure recordings directory exists
   await ensureRecordingsDir()
-  
+
+  // Camera preview window handlers
+  ipcMain.handle('show-camera-preview', (_, deviceId: string) => {
+    if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+      cameraPreviewWindow.close()
+    }
+    cameraPreviewWindow = createCameraPreviewWindow(deviceId)
+    cameraPreviewWindow.on('closed', () => {
+      cameraPreviewWindow = null
+    })
+    return { success: true }
+  })
+
+  ipcMain.handle('hide-camera-preview', () => {
+    if (cameraPreviewWindow && !cameraPreviewWindow.isDestroyed()) {
+      cameraPreviewWindow.close()
+      cameraPreviewWindow = null
+    }
+    return { success: true }
+  })
+
   registerIpcHandlers(
     createEditorWindowWrapper,
     createSourceSelectorWindowWrapper,
