@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Next.js
+.next
+out
+
+# OpenNext / Cloudflare
+.open-next
+.wrangler
+
+# Build
+dist
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+.env.*.local
